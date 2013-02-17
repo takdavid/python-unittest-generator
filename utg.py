@@ -120,46 +120,36 @@ def capture(func):
         return ret
     return func2
 
-mocks = { }
-def append_mocks(id, funcname, args, kwargs, ret):
-    global mocks
+call_info = { }
+def append_call_info(id, funcname, args, kwargs, ret):
+    global call_info
     key = funcname
-    if not key in mocks:
-        mocks[key] = []
-    mocks[key].append((args, kwargs, ret))
+    if not key in call_info:
+        call_info[key] = []
+    call_info[key].append((id, funcname, Repo.marshal().freeze(args), Repo.marshal().freeze(kwargs), Repo.marshal().freeze(ret)))
 
 def mock_code():
-    global mocks
+    global call_info
     code = ""
-    for key in mocks:
+    for key in call_info:
         funcname = key
         code += "  def mock_"+funcname+"(*args, **kwargs):\n"
-        for (args, kwargs, ret) in mocks[key]:
-            code += "    if args == "+Repo.marshal().freeze(args)+" and kwargs == "+Repo.marshal().freeze(kwargs)+":\n"
-            code += "      return "+Repo.marshal().freeze(ret)+"\n\n"
+        for (id, funcname, args, kwargs, ret) in call_info[key]:
+            code += "    if args == "+args+" and kwargs == "+kwargs+":\n"
+            code += "      return "+ret+"\n\n"
     return code
 
-tests = { }
-def append_test(funcname, id, code):
-    global tests
-    key = funcname + "_" + str(id)
-    if not key in tests:
-        tests[key] = []
-    tests[key].append(code)
-
-def append_tests(id, funcname, args, kwargs, ret):
-    append_test(funcname, id, "    actual = " + funcname + "(*" + Repo.marshal().freeze(args) + ", **" + Repo.marshal().freeze(kwargs) + ")")
-    append_test(funcname, id, "    expected = " + Repo.marshal().freeze(ret))
-
 def test_code():
-    global tests
+    global call_info
     code =  "import unittest \n" + \
             "from ent import * \n\n" + \
             "class TestEnt(unittest.TestCase): \n\n"
-    for key in tests:
-        code += "  def test_" + key + "(self):\n" + \
-                "\n".join(tests[key]) + "\n" + \
-                "    self.assertEqual(expected, actual)\n\n"
+    for key in call_info:
+        for (id, funcname, args, kwargs, ret) in call_info[key]:
+            code += "  def test_" + key + "_" + str(id) + "(self):\n"
+            code += "    actual = " + funcname + "(*" + args + ", **" + kwargs + ")\n"
+            code += "    expected = " + ret + "\n"
+            code += "    self.assertEqual(expected, actual)\n\n"
     code += "if __name__ == '__main__': \n" + \
             "  unittest.main() \n"
     return code
@@ -176,8 +166,7 @@ def log_call_enter(id, funcname, args, kwargs):
 def call_return(id, ret):
     (popid, funcname, args, kwargs) = Repo.stack().popWhile(lambda item: item[0] != id)
     log_call_return(id, ret)
-    append_tests(id, funcname, args, kwargs, ret)
-    append_mocks(id, funcname, args, kwargs, ret)
+    append_call_info(id, funcname, args, kwargs, ret)
 
 def log_call_return(id, ret):
     print get_indent() + "RETURN ", Repo.marshal().serialize(ret)
