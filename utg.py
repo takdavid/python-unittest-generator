@@ -10,6 +10,42 @@ def test_mode():
     global runmode
     runmode = "test"
 
+def capture(func):
+    """ Decorator which captures the args and the return values of the function. """
+    global runmode
+    if runmode != "capture":
+        return func
+    def func2(*args, **kwargs):
+        id = get_next_id()
+        call_enter(id, func.__name__, args, kwargs)
+        ret = func(*args, **kwargs)
+        # TODO try-except
+        call_return(id, ret)
+        return ret
+    return func2
+
+def call_enter(id, funcname, args, kwargs):
+    s_args = Repo.marshal().serialize(args)
+    s_kwargs = Repo.marshal().serialize(kwargs)
+    log_call_enter(id, funcname, s_args, s_kwargs)
+    # TODO Reachability.updatePath()
+    for (depth, item) in Repo.stack().items():
+        Repo.reachability().update(item[1], funcname, depth)
+    Repo.stack().push((id, funcname, s_args, s_kwargs, ))
+
+def log_call_enter(id, funcname, s_args, s_kwargs):
+    # TODO generate parsable history, perhaps in the call history class
+    print get_indent() + "CALL ", funcname, "(*", s_args, ", **", s_kwargs, ")"
+
+def call_return(id, ret):
+    (popid, funcname, s_args, s_kwargs) = Repo.stack().popWhile(lambda item: item[0] != id)
+    s_ret = Repo.marshal().serialize(ret)
+    log_call_return(id, s_ret)
+    append_call_info(id, funcname, s_args, s_kwargs, s_ret)
+
+def log_call_return(id, s_ret):
+    print get_indent() + "RETURN ", s_ret
+
 next_id = 1
 indent_unit = "    "
 
@@ -106,21 +142,7 @@ def get_indent():
     global indent_unit
     return "".join([ indent_unit for i in range(Repo.stack().len())])
 
-def capture(func):
-    """ Decorator which captures the args and the return values of the function. """
-    global runmode
-    if runmode != "capture":
-        return func
-    def func2(*args, **kwargs):
-        id = get_next_id()
-        call_enter(id, func.__name__, args, kwargs)
-        ret = func(*args, **kwargs)
-        # TODO try-except
-        call_return(id, ret)
-        return ret
-    return func2
-
-# TODO CallHistory class
+# TODO extract call history class
 call_info = { }
 def append_call_info(id, funcname, args, kwargs, ret):
     global call_info
@@ -129,6 +151,7 @@ def append_call_info(id, funcname, args, kwargs, ret):
         call_info[key] = []
     call_info[key].append((id, funcname, args, kwargs, ret))
 
+# TODO extract codegen class
 def mock_code():
     global call_info
     code = ""
@@ -160,25 +183,4 @@ def test_code():
     code += "if __name__ == '__main__': \n" + \
             "  unittest.main() \n"
     return code
-
-def call_enter(id, funcname, args, kwargs):
-    s_args = Repo.marshal().serialize(args)
-    s_kwargs = Repo.marshal().serialize(kwargs)
-    log_call_enter(id, funcname, s_args, s_kwargs)
-    # TODO Reachability.updatePath()
-    for (depth, item) in Repo.stack().items():
-        Repo.reachability().update(item[1], funcname, depth)
-    Repo.stack().push((id, funcname, s_args, s_kwargs, ))
-
-def log_call_enter(id, funcname, s_args, s_kwargs):
-    print get_indent() + "CALL ", funcname, "(*", s_args, ", **", s_kwargs, ")"
-
-def call_return(id, ret):
-    (popid, funcname, s_args, s_kwargs) = Repo.stack().popWhile(lambda item: item[0] != id)
-    s_ret = Repo.marshal().serialize(ret)
-    log_call_return(id, s_ret)
-    append_call_info(id, funcname, s_args, s_kwargs, s_ret)
-
-def log_call_return(id, s_ret):
-    print get_indent() + "RETURN ", s_ret
 
