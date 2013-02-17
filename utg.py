@@ -12,7 +12,6 @@ def test_mode():
 
 next_id = 1
 indent_unit = "    "
-reachability = {}
 
 class AbstractMarshal:
     def serialize(self, obj): pass
@@ -58,6 +57,22 @@ class Stack:
             yield (i, item)
             i -= 1
 
+class Reachability:
+
+    def __init__(self):
+        self._reachability = {}
+
+    def update(self, id_from, id_to, distance):
+        if not id_from in self._reachability:
+            self._reachability[id_from] = {}
+        if not id_to in self._reachability[id_from]:
+            self._reachability[id_from][id_to] = distance;
+        else:
+            self._reachability[id_from][id_to] = min(distance, self._reachability[id_from][id_to])
+
+    def matrix(self):
+        return self._reachability
+
 class Repo:
 
     _marshal = None
@@ -73,6 +88,13 @@ class Repo:
         if not isinstance(Repo._stack, Stack):
             Repo._stack = Stack()
         return Repo._stack;
+
+    _reachability = None
+    @staticmethod
+    def reachability():
+        if not isinstance(Repo._reachability, Reachability):
+            Repo._reachability = Reachability()
+        return Repo._reachability;
 
 def get_next_id():
     global next_id
@@ -142,19 +164,10 @@ def test_code():
             "  unittest.main() \n"
     return code
 
-def update_reachability(id, funcname, args, kwargs):
-    global reachability
-    for (depth, (prev_id, prev_funcname, prev_args, prev_kwargs)) in Repo.stack().items():
-        if not prev_funcname in reachability:
-            reachability[prev_funcname] = {}
-        if not funcname in reachability[prev_funcname]:
-            reachability[prev_funcname][funcname] = depth;
-        else:
-            reachability[prev_funcname][funcname] = min(depth, reachability[prev_funcname][funcname])
-
 def call_enter(id, funcname, args, kwargs):
     log_call_enter(id, funcname, args, kwargs)
-    update_reachability(id, funcname, args, kwargs)
+    for (depth, item) in Repo.stack().items():
+        Repo.reachability().update(item[1], funcname, depth)
     Repo.stack().push((id, funcname, args, kwargs))
 
 def log_call_enter(id, funcname, args, kwargs):

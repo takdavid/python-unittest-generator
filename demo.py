@@ -16,4 +16,4 @@ f.write(utg.test_code())
 f.close()
 
 print utg.mock_code()
-print repr(utg.reachability)
+print repr(utg.Repo.reachability().matrix())
