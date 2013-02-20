@@ -16,29 +16,27 @@ def capture(func):
     if runmode != "capture":
         return func
     def func2(*args, **kwargs):
-        id = get_next_id()
-        s_args = Repo.marshal().serialize(args)
-        s_kwargs = Repo.marshal().serialize(kwargs)
         key = func.__name__ # TODO generate a unique, unambiguous key for the functions
-        Repo.callhistory().call_enter(id, key, s_args if args else None, s_kwargs if kwargs else None)
-        Repo.reachability().updatePathTo(key, Repo.stack().items())
-        Repo.stack().push((id, key, s_args, s_kwargs, ))
-        ret = None
-        exc = None
-        s_ret = None
-        s_e = None
+        serialize = Repo.marshal().serialize
+        id = call_enter(key, serialize(args), serialize(kwargs))
         try:
             ret = func(*args, **kwargs)
-            s_ret = Repo.marshal().serialize(ret)
-        except Exception, e:
-            s_e = Repo.marshal().serialize(e)
-            exc = e
-        (popid, popkey, s_args, s_kwargs) = Repo.stack().popWhile(lambda item: item[0] != id)
-        Repo.callhistory().call_result(id, s_ret, s_e)
-        if exc:
+            call_result(id, serialize(ret), serialize(None))
+            return ret
+        except Exception, exc:
+            call_result(id, serialize(None), serialize(exc))
             raise exc
-        return ret
     return func2
+
+def call_enter(key, s_args, s_kwargs):
+    id = get_next_id()
+    Repo.callhistory().write_enter(id, key, s_args, s_kwargs)
+    Repo.callhistory().call_enter(id, key, s_args, s_kwargs)
+    return id
+
+def call_result(id, s_res, s_exc):
+    Repo.callhistory().call_result(id, s_res, s_exc)
+    Repo.callhistory().write_result(id, s_res, s_exc)
 
 next_id = 1
 indent_unit = "    "
@@ -47,8 +45,6 @@ class AbstractMarshal:
     def serialize(self, obj): pass
     def unserialize(self, obj): pass
     def unserialize_code(self, serialized): pass
-    def freeze(self, obj):
-        return self.unserialize_code(self.serialize(obj))
 
 class ReprMarshal (AbstractMarshal):
     def serialize(self, obj):
@@ -161,19 +157,24 @@ class CallHistory:
         self.directive = {}
 
     def call_enter(self, id, key, s_args, s_kwargs):
-        self.write(get_indent() + "CALL " + key)
-        if s_args:
-            self.write(get_indent() + "ARGS " + s_args)
-        if s_kwargs:
-            self.write(get_indent() + "KWARGS " + s_kwargs)
         self.calls[id] = [key, s_args, s_kwargs]
+        Repo.reachability().updatePathTo(key, Repo.stack().items())
+        Repo.stack().push((id, key, s_args, s_kwargs, ))
 
-    def call_result(self, id, s_ret=None, s_e=None):
-        if s_ret:
-            self.write(get_indent() + "RETURN " + s_ret)
-        if s_e:
-            self.write(get_indent() + "RAISE " + s_e)
-        self.results[id] = [s_ret, s_e]
+    def write_enter(self, id, key, s_args, s_kwargs):
+        self.write(get_indent() + "CALL " + key)
+        self.write(get_indent() + "ARGS " + s_args)
+        self.write(get_indent() + "KWARGS " + s_kwargs)
+
+    def call_result(self, id, s_res, s_exc):
+        self.results[id] = [s_res, s_exc]
+        Repo.stack().popWhile(lambda item: item[0] != id)
+
+    def write_result(self, id, s_res, s_exc):
+        if s_exc == "None":
+            self.write(get_indent() + "RETURN " + s_res)
+        else:
+            self.write(get_indent() + "RAISE " + s_exc)
 
     def keys(self):
         return set([item[0] for item in self.calls.itervalues()])
@@ -182,8 +183,8 @@ class CallHistory:
         for (id, (key, s_args, s_kwargs)) in self.calls.iteritems():
             if keyFilter and key != keyFilter:
                 continue
-            (s_ret, s_exc) = self.results[id]
-            yield (id, key, s_args, s_kwargs, s_ret, s_exc)
+            (s_res, s_exc) = self.results[id]
+            yield (id, key, s_args, s_kwargs, s_res, s_exc)
 
     def write(self, str):
         self.log.append(str)
@@ -191,32 +192,32 @@ class CallHistory:
     def readCalls(self, keyFilter=None):
         """ parse annotated call history """
         import re
-        calls = {}
-        results = {}
         id_for_indent = {}
-        for line in self.log:
+        lines = iter(self.log)
+        for line in lines:
             m = re.match("^(\s*)(CALL|TEST|MOCK) (.*?)\s*$", line)
             if m:
                 id = id_for_indent[m.group(1)] = get_next_id()
                 self.directive[id] = m.group(2)
-                set2d(self.calls, id, [None, None, None], 0, m.group(3))
-            m = re.match("^(\s*)ARGS (.*?)\s*$", line)
-            if m:
-                id = id_for_indent[m.group(1)]
-                set2d(self.calls, id, [None, None, None], 1, m.group(2))
-            m = re.match("^(\s*)KWARGS (.*?)\s*$", line)
-            if m:
-                id = id_for_indent[m.group(1)]
-                set2d(self.calls, id, [None, None, None], 2, m.group(2))
+                call = [ id, m.group(3), None, None ]
+                line = lines.next()
+                m = re.match("^(\s*)ARGS (.*?)\s*$", line)
+                if m:
+                    call[2] = m.group(2)
+                line = lines.next()
+                m = re.match("^(\s*)KWARGS (.*?)\s*$", line)
+                if m:
+                    call[3] = m.group(2)
+                self.call_enter(*call)
             m = re.match("^(\s*)RETURN (.*?)\s*$", line)
             if m:
                 id = id_for_indent[m.group(1)]
-                set2d(self.results, id, [None, None], 0, m.group(2))
+                self.call_result(id, m.group(2), None)
                 id_for_indent[m.group(1)] = None
             m = re.match("^(\s*)RAISE (.*?)\s*$", line)
             if m:
                 id = id_for_indent[m.group(1)]
-                set2d(self.results, id, [None, None], 1, m.group(2))
+                self.call_result(id, None, m.group(2))
                 id_for_indent[m.group(1)] = None
 
     def isTestable(self, id):
@@ -231,15 +232,19 @@ def mock_code():
     for key in Repo.callhistory().keys():
         funcname = key
         code += "def mock_" + key + "(*args, **kwargs):\n"
-        for (id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
+        for (id, key, s_args, s_kwargs, s_res, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
             if not Repo.callhistory().isMockable(id):
                 code += "  pass\n"
                 continue
             c_args = Repo.marshal().unserialize_code(s_args)
             c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
-            c_ret = Repo.marshal().unserialize_code(s_ret)
+            c_ret = Repo.marshal().unserialize_code(s_res)
+            c_exc = Repo.marshal().unserialize_code(s_exc)
             code += "  if args == " + (c_args if c_args else "[]") + " and kwargs == " + (c_kwargs if c_kwargs else "{}") + ":\n"
-            code += "    return " + c_ret + "\n\n"
+            if c_exc == "None":
+                code += "    return " + c_ret + "\n\n"
+            else:
+                code += "    raise " + c_exc + "\n\n"
     return code
 
 def call_func_code(c_key, c_args, c_kwargs):
@@ -259,16 +264,25 @@ def test_code():
             "from ent import * \n\n" + \
             mock_code() + \
             "class TestEnt(unittest.TestCase): \n\n"
-    for (id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls():
+    for (id, key, s_args, s_kwargs, s_res, s_exc) in Repo.callhistory().iterCalls():
         if not Repo.callhistory().isTestable(id):
             continue
         c_args = Repo.marshal().unserialize_code(s_args)
         c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
-        c_ret = Repo.marshal().unserialize_code(s_ret)
+        c_ret = Repo.marshal().unserialize_code(s_res)
+        c_exc = Repo.marshal().unserialize_code(s_exc)
         code += "  def test_" + key + "_" + str(id) + "(self):\n"
-        code += "    actual = " + call_func_code(key, c_args, c_kwargs) + ")\n"
-        code += "    expected = " + c_ret + "\n"
-        code += "    self.assertEqual(expected, actual)\n\n"
+        if not c_exc or c_exc == "None":
+            code += "    actual = " + call_func_code(key, c_args, c_kwargs) + ")\n"
+            code += "    expected = " + c_ret + "\n"
+            code += "    self.assertEqual(expected, actual)\n\n"
+        else:
+            code += "    try:\n"
+            code += "      " + call_func_code(key, c_args, c_kwargs) + ")\n"
+            code += "      self.fail('An exception should have been thrown.')\n"
+            code += "    except Exception, e:\n"
+            code += "      # expected: " + s_exc + "\n"
+            code += "      pass\n"
     code += "if __name__ == '__main__': \n" + \
             "  unittest.main() \n"
     return code
