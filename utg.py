@@ -206,7 +206,11 @@ class CallHistory:
         id_for_indent = {}
         lines = iter(self.log)
         for line in lines:
-            m = re.match("^(\s*)(CALL|TEST|MOCK) (.*?)\s*$", line)
+            m = re.match("^(\s*)MOCK (.*?)\s*$", line)
+            if m:
+                id = id_for_indent[m.group(1)] = get_next_id()
+                self.directive[id] = m.group(2)
+            m = re.match("^(\s*)(CALL|TEST) (.*?)\s*$", line)
             if m:
                 id = id_for_indent[m.group(1)] = get_next_id()
                 self.directive[id] = m.group(2)
