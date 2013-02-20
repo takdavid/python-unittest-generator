@@ -161,6 +161,7 @@ class CallHistory:
         self.calls = {}
         self.results = {}
         self.log = []
+        self.directive = {}
 
     def call_enter(self, id, key, s_args, s_kwargs):
         self.write(cobol(id) + get_indent() + "CALL " + key)
@@ -189,32 +190,38 @@ class CallHistory:
 
     def write(self, str):
         self.log.append(str)
-        print str
 
     def readCalls(self, keyFilter=None):
         """ parse annotated call history """
         import re
         for line in self.log:
-            m = re.match("^\s*(\d+)\s* CALL (.*)$", line)
+            m = re.match("^\s*(\d+)\s* (CALL|TEST|MOCK) (.*?)\s*$", line)
             if m:
                 id = int(m.group(1))
-                set2d(self.calls, id, [None, None, None], 0, m.group(2))
-            m = re.match("^\s*(\d+)\s* ARGS (.*)$", line)
+                self.directive[id] = m.group(2)
+                set2d(self.calls, id, [None, None, None], 0, m.group(3))
+            m = re.match("^\s*(\d+)\s* ARGS (.*?)\s*$", line)
             if m:
                 id = int(m.group(1))
                 set2d(self.calls, id, [None, None, None], 1, m.group(2))
-            m = re.match("^\s*(\d+)\s* KWARGS (.*)$", line)
+            m = re.match("^\s*(\d+)\s* KWARGS (.*?)\s*$", line)
             if m:
                 id = int(m.group(1))
                 set2d(self.calls, id, [None, None, None], 2, m.group(2))
-            m = re.match("^\s*(\d+)\s* RETURN (.*)$", line)
+            m = re.match("^\s*(\d+)\s* RETURN (.*?)\s*$", line)
             if m:
                 id = int(m.group(1))
                 set2d(self.results, id, [None, None], 0, m.group(2))
-            m = re.match("^\s*(\d+)\s* RAISE (.*)$", line)
+            m = re.match("^\s*(\d+)\s* RAISE (.*?)\s*$", line)
             if m:
                 id = int(m.group(1))
                 set2d(self.results, id, [None, None], 1, m.group(2))
+
+    def isTestable(self, id):
+        return True if self.directive[id] == "CALL" or self.directive[id] == "TEST" else False
+
+    def isMockable(self, id):
+        return True if self.directive[id] == "MOCK" else False
 
 # TODO extract codegen class
 def mock_code():
@@ -223,6 +230,9 @@ def mock_code():
         funcname = key
         code += "def mock_" + key + "(*args, **kwargs):\n"
         for (id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
+            if not Repo.callhistory().isMockable(id):
+                code += "  pass\n"
+                continue
             c_args = Repo.marshal().unserialize_code(s_args)
             c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
             c_ret = Repo.marshal().unserialize_code(s_ret)
@@ -248,6 +258,8 @@ def test_code():
             mock_code() + \
             "class TestEnt(unittest.TestCase): \n\n"
     for (id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls():
+        if not Repo.callhistory().isTestable(id):
+            continue
         c_args = Repo.marshal().unserialize_code(s_args)
         c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
         c_ret = Repo.marshal().unserialize_code(s_ret)
