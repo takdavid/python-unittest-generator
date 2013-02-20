@@ -16,7 +16,7 @@ def capture(func):
     if runmode != "capture":
         return func
     def func2(*args, **kwargs):
-        key = func.__name__ # TODO generate a unique, unambiguous key for the functions
+        key = func.__module__ + "." + func.__name__ # TODO generate a unique, unambiguous key for the functions
         serialize = Repo.marshal().serialize
         id = call_enter(key, serialize(args), serialize(kwargs))
         try:
@@ -65,6 +65,12 @@ class Stack:
 
     def pop(self):
         return self._list.pop()
+
+    def top(self):
+        try:
+            return self._list[-1]
+        except IndexError:
+            return None
 
     def popWhile(self, callback):
         item = self.pop()
@@ -152,12 +158,17 @@ class CallHistory:
 
     def __init__(self):
         self.calls = {}
+        self.caller = {}
         self.results = {}
         self.log = []
         self.directive = {}
 
     def call_enter(self, id, key, s_args, s_kwargs):
         self.calls[id] = [key, s_args, s_kwargs]
+        try:
+            self.caller[id] = Repo.stack().top()[0]
+        except TypeError:
+            self.caller[id] = None
         Repo.reachability().updatePathTo(key, Repo.stack().items())
         Repo.stack().push((id, key, s_args, s_kwargs, ))
 
@@ -226,25 +237,31 @@ class CallHistory:
     def isMockable(self, id):
         return True if self.directive[id] == "MOCK" else False
 
+def sanitize(key):
+    return key.replace('.', '_')
+
 # TODO extract codegen class
-def mock_code():
+def mock_code(something):
     code = ""
+    unserialize_code = Repo.marshal().unserialize_code
     for key in Repo.callhistory().keys():
-        funcname = key
-        code += "def mock_" + key + "(*args, **kwargs):\n"
+        code += "def mock_" + sanitize(key) + "(*args, **kwargs):\n"
         for (id, key, s_args, s_kwargs, s_res, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
+            (key, s_args, s_kwargs) = Repo.callhistory().calls[id]
+            (s_res, s_exc) = Repo.callhistory().results[id]
             if not Repo.callhistory().isMockable(id):
                 code += "  pass\n"
                 continue
-            c_args = Repo.marshal().unserialize_code(s_args)
-            c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
-            c_ret = Repo.marshal().unserialize_code(s_res)
-            c_exc = Repo.marshal().unserialize_code(s_exc)
+            c_args = unserialize_code(s_args)
+            c_kwargs = unserialize_code(s_kwargs)
+            c_ret = unserialize_code(s_res)
+            c_exc = unserialize_code(s_exc)
             code += "  if args == " + (c_args if c_args else "[]") + " and kwargs == " + (c_kwargs if c_kwargs else "{}") + ":\n"
-            if c_exc == "None":
-                code += "    return " + c_ret + "\n\n"
+            if not c_exc or c_exc == "None":
+                code += "    return " + c_ret + "\n"
             else:
-                code += "    raise " + c_exc + "\n\n"
+                code += "    raise " + c_exc + "\n"
+        code += "\n"
     return code
 
 def call_func_code(c_key, c_args, c_kwargs):
@@ -262,20 +279,34 @@ def call_func_code(c_key, c_args, c_kwargs):
 def test_code():
     code =  "import unittest \n" + \
             "from ent import * \n\n" + \
-            mock_code() + \
-            "class TestEnt(unittest.TestCase): \n\n"
-    for (id, key, s_args, s_kwargs, s_res, s_exc) in Repo.callhistory().iterCalls():
-        if not Repo.callhistory().isTestable(id):
+            "import ent \n\n"
+    unserialize_code = Repo.marshal().unserialize_code
+    mockmap = {}
+    callhistory = Repo.callhistory()
+    for (id, key, s_args, s_kwargs, s_res, s_exc) in callhistory.iterCalls():
+        if callhistory.isMockable(id):
+            try:
+                mockmap[callhistory.caller[id]].append(id)
+            except KeyError:
+                mockmap[callhistory.caller[id]] = [id]
+    code += mock_code(set())
+    code += "class TestEnt(unittest.TestCase): \n\n"
+    for (id, key, s_args, s_kwargs, s_res, s_exc) in callhistory.iterCalls():
+        if not callhistory.isTestable(id):
             continue
-        c_args = Repo.marshal().unserialize_code(s_args)
-        c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
-        c_ret = Repo.marshal().unserialize_code(s_res)
-        c_exc = Repo.marshal().unserialize_code(s_exc)
-        code += "  def test_" + key + "_" + str(id) + "(self):\n"
+        c_args = unserialize_code(s_args)
+        c_kwargs = unserialize_code(s_kwargs)
+        c_ret = unserialize_code(s_res)
+        c_exc = unserialize_code(s_exc)
+        code += "  def test_" + sanitize(key) + "_" + str(id) + "(self):\n"
+        if id in mockmap:
+            for mockkey in set([callhistory.calls[mockid][0] for mockid in mockmap[id]]):
+                code += "    old_" + sanitize(mockkey) + " = " + mockkey + "\n"
+                code += "    " + mockkey + " = mock_" + sanitize(mockkey) + "\n"
         if not c_exc or c_exc == "None":
             code += "    actual = " + call_func_code(key, c_args, c_kwargs) + ")\n"
             code += "    expected = " + c_ret + "\n"
-            code += "    self.assertEqual(expected, actual)\n\n"
+            code += "    self.assertEqual(expected, actual)\n"
         else:
             code += "    try:\n"
             code += "      " + call_func_code(key, c_args, c_kwargs) + ")\n"
@@ -283,6 +314,10 @@ def test_code():
             code += "    except Exception, e:\n"
             code += "      # expected: " + s_exc + "\n"
             code += "      pass\n"
+        if id in mockmap:
+            for mockkey in set([callhistory.calls[mockid][0] for mockid in mockmap[id]]):
+                code += "    " + mockkey + " = old_" + sanitize(mockkey) + "\n"
+        code += "\n"
     code += "if __name__ == '__main__': \n" + \
             "  unittest.main() \n"
     return code
