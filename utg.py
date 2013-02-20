@@ -77,7 +77,7 @@ class Stack:
         while self.len() > 0 and callback(item):
             item = self.pop()
         if callback(item):
-            raise Error("Stack item not found")
+            raise Exception("Stack item not found")
         return item
 
     def len(self):
@@ -206,11 +206,7 @@ class CallHistory:
         id_for_indent = {}
         lines = iter(self.log)
         for line in lines:
-            m = re.match("^(\s*)MOCK (.*?)\s*$", line)
-            if m:
-                id = id_for_indent[m.group(1)] = get_next_id()
-                self.directive[id] = m.group(2)
-            m = re.match("^(\s*)(CALL|TEST) (.*?)\s*$", line)
+            m = re.match("^(\s*)(CALL|TEST|MOCK) (.*?)\s*$", line)
             if m:
                 id = id_for_indent[m.group(1)] = get_next_id()
                 self.directive[id] = m.group(2)
@@ -224,6 +220,7 @@ class CallHistory:
                 if m:
                     call[3] = m.group(2)
                 self.call_enter(*call)
+                continue
             m = re.match("^(\s*)RETURN (.*?)\s*$", line)
             if m:
                 id = id_for_indent[m.group(1)]
