@@ -147,9 +147,6 @@ def get_indent():
     global indent_unit
     return "".join([ indent_unit for i in range(Repo.stack().len())])
 
-def cobol(id):
-    return "%7d " % id
-
 def set2d(ref, x, dx, y, value):
     if x not in ref:
         ref[x] = dx
@@ -164,18 +161,18 @@ class CallHistory:
         self.directive = {}
 
     def call_enter(self, id, key, s_args, s_kwargs):
-        self.write(cobol(id) + get_indent() + "CALL " + key)
+        self.write(get_indent() + "CALL " + key)
         if s_args:
-            self.write(cobol(id) + get_indent() + "ARGS " + s_args)
+            self.write(get_indent() + "ARGS " + s_args)
         if s_kwargs:
-            self.write(cobol(id) + get_indent() + "KWARGS " + s_kwargs)
+            self.write(get_indent() + "KWARGS " + s_kwargs)
         self.calls[id] = [key, s_args, s_kwargs]
 
     def call_result(self, id, s_ret=None, s_e=None):
         if s_ret:
-            self.write(cobol(id) + get_indent() + "RETURN " + s_ret)
+            self.write(get_indent() + "RETURN " + s_ret)
         if s_e:
-            self.write(cobol(id) + get_indent() + "RAISE " + s_e)
+            self.write(get_indent() + "RAISE " + s_e)
         self.results[id] = [s_ret, s_e]
 
     def keys(self):
@@ -194,28 +191,33 @@ class CallHistory:
     def readCalls(self, keyFilter=None):
         """ parse annotated call history """
         import re
+        calls = {}
+        results = {}
+        id_for_indent = {}
         for line in self.log:
-            m = re.match("^\s*(\d+)\s* (CALL|TEST|MOCK) (.*?)\s*$", line)
+            m = re.match("^(\s*)(CALL|TEST|MOCK) (.*?)\s*$", line)
             if m:
-                id = int(m.group(1))
+                id = id_for_indent[m.group(1)] = get_next_id()
                 self.directive[id] = m.group(2)
                 set2d(self.calls, id, [None, None, None], 0, m.group(3))
-            m = re.match("^\s*(\d+)\s* ARGS (.*?)\s*$", line)
+            m = re.match("^(\s*)ARGS (.*?)\s*$", line)
             if m:
-                id = int(m.group(1))
+                id = id_for_indent[m.group(1)]
                 set2d(self.calls, id, [None, None, None], 1, m.group(2))
-            m = re.match("^\s*(\d+)\s* KWARGS (.*?)\s*$", line)
+            m = re.match("^(\s*)KWARGS (.*?)\s*$", line)
             if m:
-                id = int(m.group(1))
+                id = id_for_indent[m.group(1)]
                 set2d(self.calls, id, [None, None, None], 2, m.group(2))
-            m = re.match("^\s*(\d+)\s* RETURN (.*?)\s*$", line)
+            m = re.match("^(\s*)RETURN (.*?)\s*$", line)
             if m:
-                id = int(m.group(1))
+                id = id_for_indent[m.group(1)]
                 set2d(self.results, id, [None, None], 0, m.group(2))
-            m = re.match("^\s*(\d+)\s* RAISE (.*?)\s*$", line)
+                id_for_indent[m.group(1)] = None
+            m = re.match("^(\s*)RAISE (.*?)\s*$", line)
             if m:
-                id = int(m.group(1))
+                id = id_for_indent[m.group(1)]
                 set2d(self.results, id, [None, None], 1, m.group(2))
+                id_for_indent[m.group(1)] = None
 
     def isTestable(self, id):
         return True if self.directive[id] == "CALL" or self.directive[id] == "TEST" else False
