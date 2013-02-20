@@ -249,9 +249,6 @@ def mock_code(something):
         for (id, key, s_args, s_kwargs, s_res, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
             (key, s_args, s_kwargs) = Repo.callhistory().calls[id]
             (s_res, s_exc) = Repo.callhistory().results[id]
-            if not Repo.callhistory().isMockable(id):
-                code += "  pass\n"
-                continue
             c_args = unserialize_code(s_args)
             c_kwargs = unserialize_code(s_kwargs)
             c_ret = unserialize_code(s_res)
