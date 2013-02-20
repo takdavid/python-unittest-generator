@@ -20,20 +20,21 @@ def capture(func):
         s_args = Repo.marshal().serialize(args)
         s_kwargs = Repo.marshal().serialize(kwargs)
         key = func.__name__ # TODO generate a unique, unambiguous key for the functions
-        Repo.callhistory().log_call_enter(id, key, s_args if args else None, s_kwargs if kwargs else None)
+        Repo.callhistory().call_enter(id, key, s_args if args else None, s_kwargs if kwargs else None)
         Repo.reachability().updatePathTo(key, Repo.stack().items())
         Repo.stack().push((id, key, s_args, s_kwargs, ))
+        ret = None
+        s_ret = None
+        s_e = None
         try:
             ret = func(*args, **kwargs)
             s_ret = Repo.marshal().serialize(ret)
-            s_e = None
-            Repo.callhistory().log_call_return(id, s_ret)
         except Exception, e:
-            s_ret = None
             s_e = Repo.marshal().serialize(e)
-            Repo.callhistory().log_call_raise(id, s_e)
         (popid, popkey, s_args, s_kwargs) = Repo.stack().popWhile(lambda item: item[0] != id)
-        Repo.callhistory().append(id, popkey, s_args, s_kwargs, s_ret, s_e)
+        Repo.callhistory().call_result(id, s_ret, s_e)
+        if e:
+            raise e
         return ret
     return func2
 
@@ -147,35 +148,33 @@ def get_indent():
 class CallHistory:
 
     def __init__(self):
-        self.call_info = {}
+        self.calls = {}
+        self.results = {}
 
-    def log_call_enter(self, id, key, s_args, s_kwargs):
+    def call_enter(self, id, key, s_args, s_kwargs):
         print get_indent() + "CALL " + key
-        if (s_args):
+        if s_args:
             print get_indent() + "ARGS " + s_args
-        if (s_kwargs):
+        if s_kwargs:
             print get_indent() + "KWARGS " + s_kwargs
+        self.calls[id] = (key, s_args, s_kwargs)
 
-    def log_call_return(self, id, s_ret):
-        print get_indent() + "RETURN " + s_ret
-
-    def log_call_raise(self, s_e):
-        print get_indent() + "RAISE " + s_e
+    def call_result(self, id, s_ret=None, s_e=None):
+        if s_ret:
+            print get_indent() + "RETURN " + s_ret
+        if s_e:
+            print get_indent() + "RAISE " + s_e
+        self.results[id] = (s_ret, s_e)
 
     def keys(self):
-        return self.call_info.keys()
-
-    def append(self, id, key, args, kwargs, ret=None, exc=None):
-        if not key in self.keys():
-            self.call_info[key] = []
-        self.call_info[key].append((id, key, args, kwargs, ret, exc))
+        return set([item[0] for item in self.calls.itervalues()])
 
     def iterCalls(self, keyFilter=None):
-        for key in self.call_info:
+        for (id, (key, s_args, s_kwargs)) in self.calls.iteritems():
             if keyFilter and key != keyFilter:
                 continue
-            for (id, key, s_args, s_kwargs, s_ret, s_exc) in self.call_info[key]:
-                yield (key, id, key, s_args, s_kwargs, s_ret, s_exc)
+            (s_ret, s_exc) = self.results[id]
+            yield (id, key, s_args, s_kwargs, s_ret, s_exc)
 
 # TODO extract codegen class
 def mock_code():
@@ -183,20 +182,20 @@ def mock_code():
     for key in Repo.callhistory().keys():
         funcname = key
         code += "  def mock_" + key + "(*args, **kwargs):\n"
-        for (akey, id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
+        for (id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls(keyFilter=key):
             c_args = Repo.marshal().unserialize_code(s_args)
             c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
             c_ret = Repo.marshal().unserialize_code(s_ret)
-            code += "    if args == " + c_args + " and kwargs == " + c_kwargs + ":\n"
+            code += "    if args == " + (c_args if c_args else "[]") + " and kwargs == " + (c_kwargs if c_kwargs else "{}") + ":\n"
             code += "      return " + c_ret + "\n\n"
     return code
 
 def call_func_code(c_key, c_args, c_kwargs):
     code = c_key + "("
-    has_args = c_args != "()"
+    has_args = (c_args and c_args != "()")
     if has_args:
         code += c_args[1:-2]
-    has_kwargs = (c_kwargs != "{}")
+    has_kwargs = (c_kwargs and c_kwargs != "{}")
     if has_args and has_kwargs:
         code += ", "
     if has_kwargs:
@@ -207,7 +206,7 @@ def test_code():
     code =  "import unittest \n" + \
             "from ent import * \n\n" + \
             "class TestEnt(unittest.TestCase): \n\n"
-    for (key, id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls():
+    for (id, key, s_args, s_kwargs, s_ret, s_exc) in Repo.callhistory().iterCalls():
         c_args = Repo.marshal().unserialize_code(s_args)
         c_kwargs = Repo.marshal().unserialize_code(s_kwargs)
         c_ret = Repo.marshal().unserialize_code(s_ret)
