@@ -4,16 +4,17 @@ utg.capture_mode()
 import ent
 
 n = 2313
-factors = ent.factor(n)
-print repr(factors)
+ent.factor(n)
 
 n = 2311
-a = ent.primitive_root(n)
-print repr(a)
+ent.primitive_root(n)
+
+utg.Repo.callhistory().calls = {}
+utg.Repo.callhistory().results = {}
+utg.Repo.callhistory().readCalls()
 
 f = open('test_ent.py', 'w')
 f.write(utg.test_code())
 f.close()
 
-print utg.mock_code()
 print repr(utg.Repo.reachability().matrix())
