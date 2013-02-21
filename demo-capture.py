@@ -3,7 +3,7 @@ from utg import capture
 utg.capture_mode()
 
 import ent
-utg.capture_module_functions(ent, exclude="powermod")
+utg.capture_module_functions(ent)
 
 n = 2313
 ent.factor(n)

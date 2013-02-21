@@ -19,7 +19,7 @@ import re
 
 def capture_module_functions(mod, exclude=None):
     for fun in callablesOf(mod):
-        if not re.match(exclude, fun.__name__):
+        if not exclude or not re.match(exclude, fun.__name__):
             setattr(mod, fun.__name__, capture(fun))
 
 def capture(func):
@@ -367,7 +367,7 @@ class TestCodegen:
         code = ""
         has_args = not self.marshal.is_empty(s_args)
         if has_args:
-            code += s_args[1:-2] # FIX hack
+            code += s_args[1:-1] # FIX hack
         has_kwargs = not self.marshal.is_empty(s_kwargs)
         if has_args and has_kwargs:
             code += ", "
