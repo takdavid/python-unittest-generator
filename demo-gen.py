@@ -13,5 +13,3 @@ f = open('test_ent.py', 'w')
 f.write(utg.test_code())
 f.close()
 
-print repr(utg.Repo.reachability().matrix())
-

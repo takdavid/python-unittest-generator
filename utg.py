@@ -58,10 +58,26 @@ def test_code():
     input_lines = []
     hr.readCalls()
     hr.replay(Repo.callhistory())
-    g = TestCodegen(Repo.callhistory(), hr)
+    g = TestCodegen(Repo.callhistory(), hr, Repo.marshal())
     return g.test_code()
 
 # classes
+
+class Repo:
+
+    _marshal = None
+    @staticmethod
+    def marshal():
+        if not isinstance(Repo._marshal, AbstractMarshal):
+            Repo._marshal = ReprMarshal()
+        return Repo._marshal;
+
+    _callhistory = None
+    @staticmethod
+    def callhistory():
+        if not isinstance(Repo._callhistory, CallHistory):
+            Repo._callhistory = CallHistory()
+        return Repo._callhistory;
 
 class AbstractMarshal:
     def serialize(self, obj): pass
@@ -131,36 +147,6 @@ class Reachability:
 
     def matrix(self):
         return self._reachability
-
-class Repo:
-
-    _marshal = None
-    @staticmethod
-    def marshal():
-        if not isinstance(Repo._marshal, AbstractMarshal):
-            Repo._marshal = ReprMarshal()
-        return Repo._marshal;
-
-    _stack = None
-    @staticmethod
-    def stack():
-        if not isinstance(Repo._stack, Stack):
-            Repo._stack = Stack()
-        return Repo._stack;
-
-    _reachability = None
-    @staticmethod
-    def reachability():
-        if not isinstance(Repo._reachability, Reachability):
-            Repo._reachability = Reachability()
-        return Repo._reachability;
-
-    _callhistory = None
-    @staticmethod
-    def callhistory():
-        if not isinstance(Repo._callhistory, CallHistory):
-            Repo._callhistory = CallHistory()
-        return Repo._callhistory;
 
 class CallHistoryBuilder(object):
 
@@ -310,24 +296,26 @@ class CallHistory(CallHistoryBuilder):
     def __init__(self):
         super(CallHistory, self).__init__()
         self.caller = {}
+        self.stack = Stack()
+        self.reachability = Reachability()
 
     def get_indent(self):
-        return Repo.stack().get_indent()
+        return self.stack.get_indent()
 
     def call_enter(self, id, key, s_args, s_kwargs):
         # TODO eliminate this indent thing -- use own stack or something
         self.linear.append((self.get_indent(), 'enter', id, ))
         self.calls[id] = [key, s_args, s_kwargs]
         try:
-            self.caller[id] = Repo.stack().top()[0]
+            self.caller[id] = self.stack.top()[0]
         except TypeError:
             self.caller[id] = None
-        Repo.reachability().updatePathTo(key, enumerate(reversed(Repo.stack())))
-        Repo.stack().append((id, key, s_args, s_kwargs, ))
+        self.reachability.updatePathTo(key, enumerate(reversed(self.stack)))
+        self.stack.append((id, key, s_args, s_kwargs, ))
 
     def call_result(self, id, s_res, s_exc):
         self.results[id] = [s_res, s_exc]
-        Repo.stack().popWhile(lambda item: item[0] != id)
+        self.stack.popWhile(lambda item: item[0] != id)
         self.linear.append((self.get_indent(), 'result', id, ))
 
     def keys(self):
@@ -342,9 +330,10 @@ class CallHistory(CallHistoryBuilder):
 
 class TestCodegen:
 
-    def __init__(self, callhistory, historyreader):
+    def __init__(self, callhistory, historyreader, marshal):
         self.callhistory = callhistory
         self.historyreader = historyreader
+        self.marshal = marshal
 
     def gen_func_name(self, *parts):
         return "_".join(map(lambda str: str.replace('.', '_'), parts))
@@ -355,16 +344,15 @@ class TestCodegen:
     # TODO extract codegen class
     def mock_code(self, something):
         code = ""
-        marshal = Repo.marshal()
         for key in self.callhistory.keys():
             mock_func_name = self.gen_func_name("mock", key)
             code += "def " + mock_func_name + "(*args, **kwargs):\n"
             for (id, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls(keyFilter=key):
-                c_args = self.unserialize_code(s_args or marshal.empty_list())
-                c_kwargs = self.unserialize_code(s_kwargs or marshal.empty_dict())
-                c_ret = self.unserialize_code(s_res or marshal.none())
+                c_args = self.unserialize_code(s_args or self.marshal.empty_list())
+                c_kwargs = self.unserialize_code(s_kwargs or self.marshal.empty_dict())
+                c_ret = self.unserialize_code(s_res or self.marshal.none())
                 code += "  if args == " + c_args + " and kwargs == " + c_kwargs + ":\n"
-                if marshal.is_exception(s_exc):
+                if self.marshal.is_exception(s_exc):
                     code += "    raise " + s_exc + "\n"
                 else:
                     code += "    return " + c_ret + "\n"
@@ -373,7 +361,6 @@ class TestCodegen:
 
     def mock_setup_code(self, functions_to_mock):
         code = ""
-        marshal = Repo.marshal()
         for orig_func_name in functions_to_mock:
             old_func_name = self.gen_func_name("old", orig_func_name)
             mock_func_name = self.gen_func_name("mock", orig_func_name)
@@ -383,18 +370,17 @@ class TestCodegen:
 
     def mock_teardown_code(self, functions_to_mock):
         code = ""
-        marshal = Repo.marshal()
         for orig_func_name in functions_to_mock:
             old_func_name = self.gen_func_name("old", orig_func_name)
             code += "    " + orig_func_name + " = " + old_func_name + "\n"
         return code
 
-    def c_call_function(self, marshal, key, s_args, s_kwargs):
+    def c_call_function(self, key, s_args, s_kwargs):
         code = ""
-        has_args = not marshal.is_empty(s_args)
+        has_args = not self.marshal.is_empty(s_args)
         if has_args:
             code += s_args[1:-2] # FIX hack
-        has_kwargs = not marshal.is_empty(s_kwargs)
+        has_kwargs = not self.marshal.is_empty(s_kwargs)
         if has_args and has_kwargs:
             code += ", "
         if has_kwargs:
@@ -402,7 +388,6 @@ class TestCodegen:
         return key + "(" + code + ")"
 
     def test_code(self):
-        marshal = Repo.marshal()
         code =  "import unittest \n" + \
                 "from ent import * \n\n" + \
                 "import ent \n\n"
@@ -421,15 +406,15 @@ class TestCodegen:
             code += "  def " + self.gen_func_name("test", key, str(id)) + "(self):\n"
             functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[id]]) if id in mockmap else set()
             code += self.mock_setup_code(functions_to_mock)
-            if marshal.is_exception(s_exc):
+            if self.marshal.is_exception(s_exc):
                 code += "    try:\n"
-                code += "      " + self.c_call_function(marshal, key, s_args, s_kwargs) + "\n"
+                code += "      " + self.c_call_function(key, s_args, s_kwargs) + "\n"
                 code += "      self.fail('An exception should have been thrown.')\n"
                 code += "    except Exception, e:\n"
                 code += "      # expected: " + s_exc + "\n"
                 code += "      pass\n"
             else:
-                code += "    actual = " + self.c_call_function(marshal, key, s_args, s_kwargs) + "\n"
+                code += "    actual = " + self.c_call_function(key, s_args, s_kwargs) + "\n"
                 code += "    expected = " + self.unserialize_code(s_res) + "\n"
                 code += "    self.assertEqual(expected, actual)\n"
             code += self.mock_teardown_code(functions_to_mock)

@@ -23,5 +23,3 @@ for line in utg.capture_log():
     f.write(line + "\n")
 f.close()
 
-# TODO save reachability matrix if needed
-print repr(utg.Repo.reachability().matrix())
