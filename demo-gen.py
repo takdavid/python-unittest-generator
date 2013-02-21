@@ -1,15 +1,14 @@
 import utg
 utg.test_mode()
+parser = utg.CallHistoryParser()
 
 import ent
 
 l = open('capture.log', 'r')
-for line in l.readlines():
-    utg.parse_log_line(line)
+parser.parse(l.readlines())
 l.close()
-utg.parse_close()
 
 f = open('test_ent.py', 'w')
-f.write(utg.test_code())
+f.write(utg.test_code(parser))
 f.close()
 

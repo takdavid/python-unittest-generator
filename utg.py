@@ -20,43 +20,24 @@ def capture(func):
     def func2(*args, **kwargs):
         key = func.__module__ + "." + func.__name__ # TODO generate a unique, unambiguous key for the functions
         serialize = Repo.marshal().serialize
-        id = call_enter(key, serialize(args), serialize(kwargs))
+        callhistory = Repo.callhistory()
+        id = callhistory.get_next_id()
+        callhistory.call_enter(id, key, serialize(args), serialize(kwargs))
         try:
             ret = func(*args, **kwargs)
-            call_result(id, serialize(ret), serialize(None))
+            callhistory.call_result(id, serialize(ret), serialize(None))
             return ret
         except Exception, exc:
-            call_result(id, serialize(None), serialize(exc))
+            callhistory.call_result(id, serialize(None), serialize(exc))
             raise exc
     return func2
-
-def call_enter(key, s_args, s_kwargs):
-    id = Repo.callhistory().get_next_id()
-    Repo.callhistory().call_enter(id, key, s_args, s_kwargs)
-    return id
-
-def call_result(id, s_res, s_exc):
-    Repo.callhistory().call_result(id, s_res, s_exc)
 
 def capture_log():
     hw = CallHistoryWriter()
     Repo.callhistory().replay(hw)
     return hw.log
 
-input_lines = []
-
-def parse_log_line(line):
-    input_lines.append(line)
-
-def parse_close():
-    pass
-
-def test_code():
-    global input_lines
-    hr = CallHistoryParser()
-    hr.log = input_lines
-    input_lines = []
-    hr.readCalls()
+def test_code(hr):
     hr.replay(Repo.callhistory())
     g = TestCodegen(Repo.callhistory(), hr, Repo.marshal())
     return g.test_code()
@@ -248,11 +229,11 @@ class CallHistoryParser(CallHistoryBuilder):
                         if ind >= indent:
                             self._parse_directives[key][directive] = set()
 
-    def readCalls(self):
+    def parse(self, log):
         """ parse annotated call history """
         import re
         id_for_indent = {}
-        lines = iter(self.log)
+        lines = iter(log)
         for line in lines:
             m = re.match("^(\s*)((?:SKIP|TEST)?) *?CALL (.*?)\s*$", line)
             if m:
@@ -318,9 +299,6 @@ class CallHistory(CallHistoryBuilder):
         self.stack.popWhile(lambda item: item[0] != id)
         self.linear.append((self.get_indent(), 'result', id, ))
 
-    def keys(self):
-        return set([item[0] for item in self.calls.itervalues()])
-
     def iterCalls(self, keyFilter=None):
         for (id, (key, s_args, s_kwargs)) in self.calls.iteritems():
             if keyFilter and key != keyFilter:
@@ -341,10 +319,9 @@ class TestCodegen:
     def unserialize_code(self, serialized):
         return serialized
 
-    # TODO extract codegen class
     def mock_code(self, something):
         code = ""
-        for key in self.callhistory.keys():
+        for key in set([item[0] for item in self.callhistory.calls.itervalues()]):
             mock_func_name = self.gen_func_name("mock", key)
             code += "def " + mock_func_name + "(*args, **kwargs):\n"
             for (id, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls(keyFilter=key):
