@@ -1,14 +1,8 @@
 import utg
-utg.test_mode()
-parser = utg.CallHistoryParser()
 
-import ent
+# read the annotated capture log
+utg.read_capture_log('capture.log')
 
-l = open('capture.log', 'r')
-parser.parse(l.readlines())
-l.close()
-
-f = open('test_ent.py', 'w')
-f.write(utg.test_code(parser))
-f.close()
+# generate test code and write out to file
+utg.write_test_code('test_ent.py')
 

@@ -42,15 +42,31 @@ def capture(func):
             raise exc
     return func2
 
-def capture_log():
+def gen_capture_log():
     hw = CallHistoryWriter()
     Repo.callhistory().replay(hw)
     return hw.log
 
-def test_code(hr):
-    hr.replay(Repo.callhistory())
-    g = TestCodegen(Repo.callhistory(), hr, Repo.marshal())
-    return g.test_code()
+def write_capture_log(filename):
+    f = open(filename, 'w')
+    for line in gen_capture_log():
+        f.write(line + "\n")
+    f.close()
+
+def read_capture_log(filename):
+    parser = CallHistoryParser()
+    l = open(filename, 'r')
+    parser.parse(l.readlines())
+    l.close()
+    parser.replay(Repo.callhistory())
+
+def gen_test_code():
+    return TestCodegen(Repo.callhistory(), Repo.marshal()).test_code()
+
+def write_test_code(filename):
+    f = open(filename, 'w')
+    f.write(gen_test_code())
+    f.close()
 
 # classes
 
@@ -148,6 +164,7 @@ class CallHistoryBuilder(object):
         self.linear = []
         self.log = []
         self.indent = ""
+        self.directive = {}
 
     def replay(self, that):
         for (indent, what, id) in self.linear:
@@ -156,6 +173,8 @@ class CallHistoryBuilder(object):
                 that.call_enter(id, * self.calls[id])
             elif what == 'result':
                 that.call_result(id, * self.results[id])
+        for id in self.directive:
+            that.directive[id] = self.directive[id]
 
     def get_next_id(self):
         id = self.next_id
@@ -172,6 +191,12 @@ class CallHistoryBuilder(object):
     def call_result(self, id, s_res, s_exc):
         self.results[id] = [s_res, s_exc]
         self.linear.append((self.get_indent(), 'result', id, ))
+
+    def isTestable(self, id):
+        return id not in self.directive or "TEST" in self.directive[id] or not "SKIP" in self.directive[id]
+
+    def isMockable(self, id):
+        return id in self.directive and "MOCK" in self.directive[id]
 
 class CallHistoryWriter(CallHistoryBuilder):
 
@@ -199,13 +224,6 @@ class CallHistoryParser(CallHistoryBuilder):
     def __init__(self):
         super(CallHistoryParser, self).__init__()
         self._parse_directives = {}
-        self.directive = {}
-
-    def isTestable(self, id):
-        return "TEST" in self.directive[id] or not "SKIP" in self.directive[id]
-
-    def isMockable(self, id):
-        return "MOCK" in self.directive[id]
 
     def setDirective(self, indent, key, directive):
         if not directive:
@@ -319,9 +337,8 @@ class CallHistory(CallHistoryBuilder):
 
 class TestCodegen:
 
-    def __init__(self, callhistory, historyreader, marshal):
+    def __init__(self, callhistory, marshal):
         self.callhistory = callhistory
-        self.historyreader = historyreader
         self.marshal = marshal
 
     def gen_func_name(self, *parts):
@@ -381,7 +398,7 @@ class TestCodegen:
                 "import ent \n\n"
         mockmap = {}
         for (id, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
-            if self.historyreader.isMockable(id):
+            if self.callhistory.isMockable(id):
                 try:
                     mockmap[self.callhistory.caller[id]].append(id)
                 except KeyError:
@@ -389,7 +406,7 @@ class TestCodegen:
         code += self.mock_code(set())
         code += "class TestEnt(unittest.TestCase): \n\n"
         for (id, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
-            if not self.historyreader.isTestable(id):
+            if not self.callhistory.isTestable(id):
                 continue
             code += "  def " + self.gen_func_name("test", key, str(id)) + "(self):\n"
             functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[id]]) if id in mockmap else set()

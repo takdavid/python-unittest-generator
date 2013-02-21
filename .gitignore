@@ -1,7 +1,7 @@
 *.pyc
 test_ent.py
 capture.log
-<<<<<<< HEAD
 capture2.log
 test_ent2.py
 test_ent_less_examples.py
+

@@ -1,26 +1,27 @@
+# set up the tool
 import utg
-from utg import capture
 utg.capture_mode()
 
+# instrumentalize the target module
 import ent
 utg.capture_module_functions(ent)
 
-n = 2313
-ent.factor(n)
+# run example cases
+ent.factor(2313)
+ent.primitive_root(2311)
 
-n = 2311
-ent.primitive_root(n)
-
+# instrumentalize one function here
+from utg import capture
 @capture
 def raising_func():
     raise Exception("This should be raised")
+
+# run the example
 try:
     raising_func()
 except:
     pass
 
-f = open('capture.log', 'w')
-for line in utg.capture_log():
-    f.write(line + "\n")
-f.close()
+# write out the capture log
+utg.write_capture_log('capture.log')
 
