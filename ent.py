@@ -1,4 +1,3 @@
-from utg import capture
 ##################################################
 # ent.py -- Element Number Theory 
 # (c) William Stein, 2004
@@ -76,7 +75,6 @@ def primes(n):
 ## Integer Factorization
 ##################################################
 
-@capture
 def trial_division(n, bound=None):
     """
     Return the smallest prime divisor <= bound of the 
@@ -115,7 +113,6 @@ def trial_division(n, bound=None):
         i += 1
     return n
 
-@capture
 def factor(n):
     """
     Returns the factorization of the integer n as 
@@ -292,7 +289,6 @@ def powermod(a, m, n):
 ## Finding a Primitive Root
 ##################################################
 
-@capture
 def primitive_root(p):
     """
     Returns first primitive root modulo the prime p.

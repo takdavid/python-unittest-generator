@@ -12,6 +12,16 @@ def test_mode():
     global runmode
     runmode = "test"
 
+def callablesOf(obj):
+    return [getattr(obj, method) for method in dir(obj) if callable(getattr(obj, method))]
+
+import re
+
+def capture_module_functions(mod, exclude=None):
+    for fun in callablesOf(mod):
+        if not re.match(exclude, fun.__name__):
+            setattr(mod, fun.__name__, capture(fun))
+
 def capture(func):
     """ Decorator which captures the args and the return values of the function. """
     global runmode
@@ -182,6 +192,8 @@ class CallHistoryWriter(CallHistoryBuilder):
         else:
             self.write(self.get_indent() + "RAISE " + s_exc)
 
+import re
+
 class CallHistoryParser(CallHistoryBuilder):
 
     def __init__(self):
@@ -231,7 +243,6 @@ class CallHistoryParser(CallHistoryBuilder):
 
     def parse(self, log):
         """ parse annotated call history """
-        import re
         id_for_indent = {}
         lines = iter(log)
         for line in lines:
