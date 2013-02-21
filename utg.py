@@ -2,6 +2,8 @@
 
 runmode = "test" # "capture" or "test"
 
+# module API
+
 def capture_mode():
     global runmode
     runmode = "capture"
@@ -35,6 +37,31 @@ def call_enter(key, s_args, s_kwargs):
 
 def call_result(id, s_res, s_exc):
     Repo.callhistory().call_result(id, s_res, s_exc)
+
+def capture_log():
+    hw = CallHistoryWriter()
+    Repo.callhistory().replay(hw)
+    return hw.log
+
+input_lines = []
+
+def parse_log_line(line):
+    input_lines.append(line)
+
+def parse_close():
+    pass
+
+def test_code():
+    global input_lines
+    hr = CallHistoryParser()
+    hr.log = input_lines
+    input_lines = []
+    hr.readCalls()
+    hr.replay(Repo.callhistory())
+    g = TestCodegen(Repo.callhistory(), hr)
+    return g.test_code()
+
+# classes
 
 class AbstractMarshal:
     def serialize(self, obj): pass
@@ -134,19 +161,6 @@ class Repo:
         if not isinstance(Repo._callhistory, CallHistory):
             Repo._callhistory = CallHistory()
         return Repo._callhistory;
-
-def capture_log():
-    hw = CallHistoryWriter()
-    Repo.callhistory().replay(hw)
-    return hw.log
-
-input_lines = []
-
-def parse_log_line(line):
-    input_lines.append(line)
-
-def parse_close():
-    pass
 
 class CallHistoryBuilder(object):
 
@@ -325,16 +339,6 @@ class CallHistory(CallHistoryBuilder):
                 continue
             (s_res, s_exc) = self.results[id]
             yield (id, key, s_args, s_kwargs, s_res, s_exc)
-
-def test_code():
-    global input_lines
-    hr = CallHistoryParser()
-    hr.log = input_lines
-    input_lines = []
-    hr.readCalls()
-    hr.replay(Repo.callhistory())
-    g = TestCodegen(Repo.callhistory(), hr)
-    return g.test_code()
 
 class TestCodegen:
 
