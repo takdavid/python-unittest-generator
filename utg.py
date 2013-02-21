@@ -56,38 +56,21 @@ class ReprMarshal (AbstractMarshal):
     def unserialize_code(self, serialized):
         return serialized
 
-class Stack:
-    def __init__(self):
-        self._list = []
-
-    def push(self, obj):
-        self._list.append(obj)
-
-    def pop(self):
-        return self._list.pop()
+class Stack(list):
 
     def top(self):
         try:
-            return self._list[-1]
+            return self[-1]
         except IndexError:
             return None
 
     def popWhile(self, callback):
         item = self.pop()
-        while self.len() > 0 and callback(item):
+        while len(self) > 0 and callback(item):
             item = self.pop()
         if callback(item):
             raise Exception("Stack item not found")
         return item
-
-    def len(self):
-        return len(self._list)
-
-    def items(self):
-        i = self.len()
-        for item in self._list:
-            yield (i, item)
-            i -= 1
 
 class Reachability:
 
@@ -147,7 +130,7 @@ def get_next_id():
 
 def get_indent():
     global indent_unit
-    return "".join([ indent_unit for i in range(Repo.stack().len())])
+    return "".join([ indent_unit for i in range(len(Repo.stack()))])
 
 def set2d(ref, x, dx, y, value):
     if x not in ref:
@@ -170,8 +153,8 @@ class CallHistory:
             self.caller[id] = Repo.stack().top()[0]
         except TypeError:
             self.caller[id] = None
-        Repo.reachability().updatePathTo(key, Repo.stack().items())
-        Repo.stack().push((id, key, s_args, s_kwargs, ))
+        Repo.reachability().updatePathTo(key, enumerate(reversed(Repo.stack())))
+        Repo.stack().append((id, key, s_args, s_kwargs, ))
 
     def write_enter(self, id, key, s_args, s_kwargs):
         self.write(get_indent() + "CALL " + key)
