@@ -202,17 +202,21 @@ class CallHistory:
         self.log.append(str)
 
     def setDirective(self, indent, key, directive):
+        if not directive:
+            return
         if not key in self._parse_directives:
             self._parse_directives[key] = {}
         if not directive in self._parse_directives[key]:
             self._parse_directives[key][directive] = set()
         self._parse_directives[key][directive].add(indent)
-        print "DIRECT %s%s : %s" % (indent, key, directive)
+        if directive == "TEST":
+            self.unsetDirective(indent, key, "SKIP")
+        elif directive == "SKIP":
+            self.unsetDirective(indent, key, "TEST")
 
     def unsetDirective(self, indent, key, directive):
         if key in self._parse_directives and directive in self._parse_directives[key]:
-            self._parse_directives[key][directive].add(indent)
-        print "UNDIRECT %s%s : %s" % (indent, key, directive)
+            self._parse_directives[key][directive].remove(indent)
 
     def getDirectives(self, indent, key):
         dirs = set() 
@@ -241,13 +245,8 @@ class CallHistory:
             if m:
                 (indent, direct, key) = (m.group(1), m.group(2), m.group(3))
                 id = id_for_indent[indent] = get_next_id()
-                if direct == "TEST":
-                    self.setDirective(indent, key, "TEST")
-                    self.unsetDirective(indent, key, "SKIP")
-                elif direct == "SKIP":
-                    self.setDirective(indent, key, "SKIP")
-                    self.unsetDirective(indent, key, "TEST")
-                self.directive[id] = self.getDirectives(indent, key) or set(["TEST"])
+                self.setDirective(indent, key, direct)
+                self.directive[id] = self.getDirectives(indent, key)
                 call = [ id, key, None, None ]
                 line = lines.next()
                 m = re.match("^(\s*)ARGS (.*?)\s*$", line)
@@ -259,32 +258,27 @@ class CallHistory:
                     call[3] = m.group(2)
                 self.call_enter(*call)
                 continue
-            m = re.match("^(\s*)(MOCK|SKIP) (.*?)\s*$", line)
+            m = re.match("^(\s*)(MOCK|SKIP|TEST) (.*?)\s*$", line)
             if m:
                 (indent, directive, key) = (m.group(1), m.group(2), m.group(3))
                 self.setDirective(indent, key, directive)
                 continue
-            m = re.match("^(\s*)RETURN (.*?)\s*$", line)
+            m = re.match("^(\s*)(RETURN|RAISE) (.*?)\s*$", line)
             if m:
                 indent = m.group(1)
                 id = id_for_indent[indent]
-                self.call_result(id, m.group(2), None)
+                if m.group(2) == "RETURN":
+                    self.call_result(id, m.group(3), None)
+                elif m.group(2) == "RAISE":
+                    self.call_result(id, None, m.group(3))
                 id_for_indent[indent] = None
                 self.invalidateDirectives(indent)
                 continue
             m = re.match("^(\s*)RAISE (.*?)\s*$", line)
-            if m:
-                indent = m.group(1)
-                id = id_for_indent[indent]
-                self.call_result(id, None, m.group(2))
-                id_for_indent[indent] = None
-                self.invalidateDirectives(indent)
-                continue
             raise Exception("ERROR INVALID LINE " + line)
-        print repr(self.directive)
 
     def isTestable(self, id):
-        return "TEST" in self.directive[id] and not "SKIP" in self.directive[id]
+        return "TEST" in self.directive[id] or not "SKIP" in self.directive[id]
 
     def isMockable(self, id):
         return "MOCK" in self.directive[id]
