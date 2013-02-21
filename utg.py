@@ -274,7 +274,6 @@ class CallHistory:
                 id_for_indent[indent] = None
                 self.invalidateDirectives(indent)
                 continue
-            m = re.match("^(\s*)RAISE (.*?)\s*$", line)
             raise Exception("ERROR INVALID LINE " + line)
 
     def isTestable(self, id):
