@@ -30,13 +30,13 @@ def capture(func):
 
 def call_enter(key, s_args, s_kwargs):
     id = get_next_id()
-    Repo.callhistory().write_enter(id, key, s_args, s_kwargs)
+    hw.call_enter(id, key, s_args, s_kwargs)
     Repo.callhistory().call_enter(id, key, s_args, s_kwargs)
     return id
 
 def call_result(id, s_res, s_exc):
     Repo.callhistory().call_result(id, s_res, s_exc)
-    Repo.callhistory().write_result(id, s_res, s_exc)
+    hw.call_result(id, s_res, s_exc)
 
 next_id = 1
 indent_unit = "    "
@@ -86,6 +86,10 @@ class Stack(list):
         if callback(item):
             raise Exception("Stack item not found")
         return item
+
+    def get_indent(self):
+        global indent_unit
+        return "".join([ indent_unit for i in range(len(self))])
 
 class Reachability:
 
@@ -143,61 +147,81 @@ def get_next_id():
     next_id += 1
     return id
 
-def get_indent():
-    global indent_unit
-    return "".join([ indent_unit for i in range(len(Repo.stack()))])
+def capture_log():
+    hw = CallHistoryWriter()
+    Repo.callhistory().replay(hw)
+    return hw.log
 
-def set2d(ref, x, dx, y, value):
-    if x not in ref:
-        ref[x] = dx
-    ref[x][y] = value
+def parse_log_line(line):
+    hr.log.append(line)
 
-class CallHistory:
+def parse_close():
+    hr.readCalls()
+    hr.replay(Repo.callhistory())
+
+class CallHistoryBuilder:
 
     def __init__(self):
         self.calls = {}
-        self.caller = {}
         self.results = {}
-        self.log = []
-        self.directive = {}
-        self._parse_directives = {}
+        self.linear = []
+
+    def replay(self, that):
+        for (indent, what, id) in self.linear:
+            that.indent = indent
+            if what == 'enter':
+                that.call_enter(id, * self.calls[id])
+            elif what == 'result':
+                that.call_result(id, * self.results[id])
+
+    def get_indent(self):
+        return self.indent
 
     def call_enter(self, id, key, s_args, s_kwargs):
         self.calls[id] = [key, s_args, s_kwargs]
-        try:
-            self.caller[id] = Repo.stack().top()[0]
-        except TypeError:
-            self.caller[id] = None
-        Repo.reachability().updatePathTo(key, enumerate(reversed(Repo.stack())))
-        Repo.stack().append((id, key, s_args, s_kwargs, ))
-
-    def write_enter(self, id, key, s_args, s_kwargs):
-        self.write(get_indent() + "CALL " + key)
-        self.write(get_indent() + "ARGS " + s_args)
-        self.write(get_indent() + "KWARGS " + s_kwargs)
+        self.linear.append((self.get_indent(), 'enter', id, ))
 
     def call_result(self, id, s_res, s_exc):
         self.results[id] = [s_res, s_exc]
-        Repo.stack().popWhile(lambda item: item[0] != id)
+        self.linear.append((self.get_indent(), 'result', id, ))
 
-    def write_result(self, id, s_res, s_exc):
-        if s_exc == "None":
-            self.write(get_indent() + "RETURN " + s_res)
-        else:
-            self.write(get_indent() + "RAISE " + s_exc)
+class CallHistoryWriter(CallHistoryBuilder):
 
-    def keys(self):
-        return set([item[0] for item in self.calls.itervalues()])
-
-    def iterCalls(self, keyFilter=None):
-        for (id, (key, s_args, s_kwargs)) in self.calls.iteritems():
-            if keyFilter and key != keyFilter:
-                continue
-            (s_res, s_exc) = self.results[id]
-            yield (id, key, s_args, s_kwargs, s_res, s_exc)
+    def __init__(self):
+        self.log = []
+        self.indent = ""
 
     def write(self, str):
         self.log.append(str)
+
+    def call_enter(self, id, key, s_args, s_kwargs):
+        self.write(self.get_indent() + "CALL " + key)
+        self.write(self.get_indent() + "ARGS " + s_args)
+        self.write(self.get_indent() + "KWARGS " + s_kwargs)
+
+    def call_result(self, id, s_res, s_exc):
+        if s_exc == "None":
+            self.write(self.get_indent() + "RETURN " + s_res)
+        else:
+            self.write(self.get_indent() + "RAISE " + s_exc)
+
+hw = CallHistoryWriter()
+
+class CallHistoryParser(CallHistoryBuilder):
+
+    def __init__(self):
+        self.log = []
+        self._parse_directives = {}
+        self.directive = {}
+        self.linear = []
+        self.calls = {}
+        self.results = {}
+
+    def isTestable(self, id):
+        return "TEST" in self.directive[id] or not "SKIP" in self.directive[id]
+
+    def isMockable(self, id):
+        return "MOCK" in self.directive[id]
 
     def setDirective(self, indent, key, directive):
         if not directive:
@@ -233,7 +257,7 @@ class CallHistory:
                         if ind >= indent:
                             self._parse_directives[key][directive] = set()
 
-    def readCalls(self, keyFilter=None):
+    def readCalls(self):
         """ parse annotated call history """
         import re
         id_for_indent = {}
@@ -254,6 +278,7 @@ class CallHistory:
                 m = re.match("^(\s*)KWARGS (.*?)\s*$", line)
                 if m:
                     call[3] = m.group(2)
+                self.indent = indent
                 self.call_enter(*call)
                 continue
             m = re.match("^(\s*)(MOCK|SKIP|TEST) (.*?)\s*$", line)
@@ -264,6 +289,7 @@ class CallHistory:
             m = re.match("^(\s*)(RETURN|RAISE) (.*?)\s*$", line)
             if m:
                 indent = m.group(1)
+                self.indent = indent
                 id = id_for_indent[indent]
                 if m.group(2) == "RETURN":
                     self.call_result(id, m.group(3), None)
@@ -274,11 +300,41 @@ class CallHistory:
                 continue
             raise Exception("ERROR INVALID LINE " + line)
 
-    def isTestable(self, id):
-        return "TEST" in self.directive[id] or not "SKIP" in self.directive[id]
+hr = CallHistoryParser()
 
-    def isMockable(self, id):
-        return "MOCK" in self.directive[id]
+class CallHistory(CallHistoryBuilder):
+
+    def __init__(self):
+        self.calls = {}
+        self.caller = {}
+        self.results = {}
+        self.linear = []
+
+    def call_enter(self, id, key, s_args, s_kwargs):
+        # TODO eliminate this indent thing -- use own stack or something
+        self.linear.append((Repo.stack().get_indent(), 'enter', id, ))
+        self.calls[id] = [key, s_args, s_kwargs]
+        try:
+            self.caller[id] = Repo.stack().top()[0]
+        except TypeError:
+            self.caller[id] = None
+        Repo.reachability().updatePathTo(key, enumerate(reversed(Repo.stack())))
+        Repo.stack().append((id, key, s_args, s_kwargs, ))
+
+    def call_result(self, id, s_res, s_exc):
+        self.results[id] = [s_res, s_exc]
+        Repo.stack().popWhile(lambda item: item[0] != id)
+        self.linear.append((Repo.stack().get_indent(), 'result', id, ))
+
+    def keys(self):
+        return set([item[0] for item in self.calls.itervalues()])
+
+    def iterCalls(self, keyFilter=None):
+        for (id, (key, s_args, s_kwargs)) in self.calls.iteritems():
+            if keyFilter and key != keyFilter:
+                continue
+            (s_res, s_exc) = self.results[id]
+            yield (id, key, s_args, s_kwargs, s_res, s_exc)
 
 def gen_func_name(*parts):
     return "_".join(map(lambda str: str.replace('.', '_'), parts))
@@ -344,7 +400,7 @@ def test_code():
     mockmap = {}
     callhistory = Repo.callhistory()
     for (id, key, s_args, s_kwargs, s_res, s_exc) in callhistory.iterCalls():
-        if callhistory.isMockable(id):
+        if hr.isMockable(id):
             try:
                 mockmap[callhistory.caller[id]].append(id)
             except KeyError:
@@ -352,7 +408,7 @@ def test_code():
     code += mock_code(set())
     code += "class TestEnt(unittest.TestCase): \n\n"
     for (id, key, s_args, s_kwargs, s_res, s_exc) in callhistory.iterCalls():
-        if not callhistory.isTestable(id):
+        if not hr.isTestable(id):
             continue
         code += "  def " + gen_func_name("test", key, str(id)) + "(self):\n"
         functions_to_mock = set([callhistory.calls[mockid][0] for mockid in mockmap[id]]) if id in mockmap else set()

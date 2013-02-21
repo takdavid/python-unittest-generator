@@ -5,9 +5,9 @@ import ent
 
 l = open('capture.log', 'r')
 for line in l.readlines():
-    utg.Repo.callhistory().log.append(line)
+    utg.parse_log_line(line)
 l.close()
-utg.Repo.callhistory().readCalls()
+utg.parse_close()
 
 f = open('test_ent.py', 'w')
 f.write(utg.test_code())

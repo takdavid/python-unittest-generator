@@ -19,7 +19,7 @@ except:
     pass
 
 f = open('capture.log', 'w')
-for line in utg.Repo.callhistory().log:
+for line in utg.capture_log():
     f.write(line + "\n")
 f.close()
 
