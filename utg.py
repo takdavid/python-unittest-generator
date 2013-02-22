@@ -1,59 +1,73 @@
 """ unit test generator """
 
+""" The default run mode is non-capture. """
 runmode = "test" # "capture" or "test"
 
 # module API
 
 def capture_mode():
+    """ Switch to capture mode. """
     global runmode
     runmode = "capture"
 
 def test_mode():
+    """ Switch to non-capture mode. """
     global runmode
     runmode = "test"
 
 def callablesOf(obj):
+    """ Return all callable attributes of the argument. """
     return [getattr(obj, method) for method in dir(obj) if callable(getattr(obj, method))]
 
 import re
 
 def capture_module_functions(mod, exclude=None):
+    """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
     for fun in callablesOf(mod):
-        if not exclude or not re.match(exclude, fun.__name__):
+        if fun.__module__ == mod.__name__ and (not exclude or not re.match(exclude, fun.__name__)):
             setattr(mod, fun.__name__, capture(fun))
 
-def capture(func):
-    """ Decorator which captures the args and the return values of the function. """
+def capture(function):
+    """ Decorator which captures the args and the return values or the exception of the function. """
     global runmode
     if runmode != "capture":
-        return func
-    def func2(*args, **kwargs):
-        key = func.__module__ + "." + func.__name__ # TODO generate a unique, unambiguous key for the functions
+        return function
+    def wrapper(*args, **kwargs):
+        key = function.__module__ + "." + function.__name__ # TODO generate a unique, unambiguous key for the functions
         serialize = Repo.marshal().serialize
         callhistory = Repo.callhistory()
         id = callhistory.get_next_id()
         callhistory.call_enter(id, key, serialize(args), serialize(kwargs))
         try:
-            ret = func(*args, **kwargs)
+            ret = function(*args, **kwargs)
             callhistory.call_result(id, serialize(ret), serialize(None))
             return ret
         except Exception, exc:
             callhistory.call_result(id, serialize(None), serialize(exc))
             raise exc
-    return func2
+    wrapper.__name__ = function.__name__
+    wrapper.__doc__ = function.__doc__
+    try:
+        wrapper.__dict__.update(function.__dict__)
+    except:
+        pass
+    return wrapper
 
 def gen_capture_log():
+    """ Generate the capture log line by line. """
     hw = CallHistoryWriter()
     Repo.callhistory().replay(hw)
     return hw.log
 
 def write_capture_log(filename):
+    """ Write out the capture log to a file. """
     f = open(filename, 'w')
     for line in gen_capture_log():
         f.write(line + "\n")
     f.close()
 
 def read_capture_log(filename):
+    """ Read in the capture log from a file. """
     parser = CallHistoryParser()
     l = open(filename, 'r')
     parser.parse(l.readlines())
@@ -61,9 +75,11 @@ def read_capture_log(filename):
     parser.replay(Repo.callhistory())
 
 def gen_test_code():
+    """ Generate the test code in a string. """
     return TestCodegen(Repo.callhistory(), Repo.marshal()).test_code()
 
 def write_test_code(filename):
+    """ Write out the test code to a file. """
     f = open(filename, 'w')
     f.write(gen_test_code())
     f.close()
@@ -71,6 +87,7 @@ def write_test_code(filename):
 # classes
 
 class Repo:
+    """ Factory and repository. """
 
     _marshal = None
     @staticmethod
