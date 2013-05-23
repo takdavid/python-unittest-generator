@@ -39,20 +39,21 @@ def capture(function):
     if runmode != "capture":
         return function
     def wrapper(*args, **kwargs):
-        if is_instance_method(function):
-            key = function.im_self.__module__ + "." + function.im_self.__class__.__name__ + "." + function.__name__ # TODO generate a unique, unambiguous key for the functions
-        else:
-            key = function.__module__ + "." + function.__name__
         serialize = Repo.marshal().serialize
         callhistory = Repo.callhistory()
-        id = callhistory.get_next_id()
-        callhistory.call_enter(id, key, serialize(args), serialize(kwargs))
+        callid = callhistory.get_next_id()
+        if is_instance_method(function):
+            key = function.im_self.__module__ + "." + function.im_self.__class__.__name__ + "." + function.__name__
+            callhistory.call_object(callid, id(function.im_self))
+        else:
+            key = function.__module__ + "." + function.__name__
+        callhistory.call_enter(callid, key, serialize(args), serialize(kwargs))
         try:
             ret = function(*args, **kwargs)
-            callhistory.call_result(id, serialize(ret), serialize(None))
+            callhistory.call_result(callid, serialize(ret), serialize(None))
             return ret
         except Exception, exc:
-            callhistory.call_result(id, serialize(None), serialize(exc))
+            callhistory.call_result(callid, serialize(None), serialize(exc))
             raise exc
     wrapper.__name__ = function.__name__
     wrapper.__doc__ = function.__doc__
@@ -191,11 +192,14 @@ class CallHistoryBuilder(object):
         self.log = []
         self.indent = ""
         self.directive = {}
+        self.object_calls = {}
 
     def replay(self, that):
         for (indent, what, id) in self.linear:
             that.indent = indent
             if what == 'enter':
+                if self.object_calls.has_key(id):
+                    that.call_object(id, self.object_calls[id])
                 that.call_enter(id, * self.calls[id])
             elif what == 'result':
                 that.call_result(id, * self.results[id])
@@ -209,6 +213,9 @@ class CallHistoryBuilder(object):
 
     def get_indent(self):
         return self.indent
+
+    def call_object(self, callid, objid):
+        self.object_calls[callid] = objid
 
     def call_enter(self, id, key, s_args, s_kwargs):
         self.calls[id] = [key, s_args, s_kwargs]
@@ -233,7 +240,11 @@ class CallHistoryWriter(CallHistoryBuilder):
         self.log.append(str)
 
     def call_enter(self, id, key, s_args, s_kwargs):
-        self.write(self.get_indent() + "CALL " + key)
+        if self.object_calls.has_key(id):
+            objidpart = "$" + str(self.object_calls[id]) + "$"
+        else:
+            objidpart = ""
+        self.write(self.get_indent() + "CALL " + key + " " + objidpart)
         self.write(self.get_indent() + "ARGS " + s_args)
         self.write(self.get_indent() + "KWARGS " + s_kwargs)
 
@@ -290,9 +301,10 @@ class CallHistoryParser(CallHistoryBuilder):
         id_for_indent = {}
         lines = iter(log)
         for line in lines:
-            m = re.match("^(\s*)((?:SKIP|TEST)?) *?CALL (.*?)\s*$", line)
+            m = re.match("^(\s*)((?:SKIP|TEST)?) *?CALL (.*?) ((\$(.*)\$)?)\s*$", line)
             if m:
-                (indent, direct, key) = (m.group(1), m.group(2), m.group(3))
+                (indent, direct, key, objidpart) = (m.group(1), m.group(2), m.group(3), m.group(6))
+                objid = int(objidpart) if objidpart else None
                 id = id_for_indent[indent] = self.get_next_id()
                 self.setDirective(indent, key, direct)
                 self.directive[id] = self.getDirectives(indent, key)
@@ -306,6 +318,8 @@ class CallHistoryParser(CallHistoryBuilder):
                 if m:
                     call[3] = m.group(2)
                 self.indent = indent
+                if objid:
+                    self.call_object(id, objid)
                 self.call_enter(*call)
                 continue
             m = re.match("^(\s*)(MOCK|SKIP|TEST) (.*?)\s*$", line)
@@ -454,6 +468,8 @@ class TestCodegen:
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(consructor_args) if consructor_args else "") + ")\n"
+        if self.callhistory.object_calls.has_key(id):
+            code += "    # object id " + str(self.callhistory.object_calls[id]) + "\n"
         return code
 
     def test_code(self):
