@@ -27,10 +27,10 @@ def capture_module_functions(mod, exclude=None):
         if fun.__module__ == mod.__name__ and (not exclude or not re.match(exclude, fun.__name__)):
             setattr(mod, fun.__name__, capture(fun))
 
-def capture_object_methods(obj, exclude=None):
+def capture_object_methods(obj, re_exclude=None):
     """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
     for fun in callablesOf(obj):
-        if (not exclude or not re.match(exclude, fun.__name__)):
+        if (not re_exclude or not re.match(re_exclude, fun.__name__)):
             setattr(obj, fun.__name__, capture(fun))
 
 def capture(function):
@@ -468,9 +468,19 @@ class TestCodegen:
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(consructor_args) if consructor_args else "") + ")\n"
-        if self.callhistory.object_calls.has_key(id):
-            code += "    # object id " + str(self.callhistory.object_calls[id]) + "\n"
+        if self.callhistory.object_calls.has_key(id): # TODO use a getter instead of this has_key
+            objid = self.callhistory.object_calls[id]
+            code += "    # object id " + str(objid) + "\n"
+            for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.get_object_history_until(id, objid):
+                code += "    " + self.c_call_function(old_key, old_s_args, old_s_kwargs) + "\n"
         return code
+
+    def get_object_history_until(self, callid, objid):
+        for tupl in self.callhistory.iterCalls():
+            if tupl[0] == callid:
+                break
+            if self.callhistory.object_calls.has_key(tupl[0]) and self.callhistory.object_calls[tupl[0]] == objid:
+                yield tupl
 
     def test_code(self):
         code =  "import unittest \n" + \

@@ -1,11 +1,24 @@
 import ent
 
 class Ent:
+    classvar = "classvarvalue"
+
+    def __init__(self):
+        self.enabled = False
+
+    def enable(self):
+        self.enabled = True
+
     def trial_division(self, n, bound=None):
+        assert self.enabled
         return ent.trial_division(n, bound=bound)
+
     def powermod(self, a, m, n):
+        assert self.enabled
         return ent.powermod(a, m, n)
+
     def factor(self, n):
+        assert self.enabled
         if n in [-1, 0, 1]: return []
         if n < 0: n = -n
         F = []
@@ -18,7 +31,9 @@ class Ent:
             F.append((p,e))
         F.sort()
         return F
+
     def primitive_root(self, p):
+        assert self.enabled
         if p == 2: return 1
         F = self.factor(p-1)
         a = 2

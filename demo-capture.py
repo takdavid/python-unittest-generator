@@ -26,6 +26,9 @@ except:
 import ent_class
 E = ent_class.Ent()
 utg.capture_object_methods(E)
+# TODO utg.capture_object_properties(E)
+# E.the_answer = 42
+E.enable()
 E.factor(2313)
 E.primitive_root(2311)
 
