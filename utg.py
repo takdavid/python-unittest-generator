@@ -27,13 +27,22 @@ def capture_module_functions(mod, exclude=None):
         if fun.__module__ == mod.__name__ and (not exclude or not re.match(exclude, fun.__name__)):
             setattr(mod, fun.__name__, capture(fun))
 
+def capture_object_methods(obj, exclude=None):
+    """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
+    for fun in callablesOf(obj):
+        if (not exclude or not re.match(exclude, fun.__name__)):
+            setattr(obj, fun.__name__, capture(fun))
+
 def capture(function):
     """ Decorator which captures the args and the return values or the exception of the function. """
     global runmode
     if runmode != "capture":
         return function
     def wrapper(*args, **kwargs):
-        key = function.__module__ + "." + function.__name__ # TODO generate a unique, unambiguous key for the functions
+        if is_instance_method(function):
+            key = function.im_self.__module__ + "." + function.im_self.__class__.__name__ + "." + function.__name__ # TODO generate a unique, unambiguous key for the functions
+        else:
+            key = function.__module__ + "." + function.__name__
         serialize = Repo.marshal().serialize
         callhistory = Repo.callhistory()
         id = callhistory.get_next_id()
@@ -398,21 +407,60 @@ class TestCodegen:
         return code
 
     def c_call_function(self, key, s_args, s_kwargs):
-        code = ""
+        args_code = ""
         has_args = not self.marshal.is_empty(s_args)
         if has_args:
-            code += s_args[1:-1] # FIX hack
+            s_args_code = s_args[1:-1] # FIX hack
+            if s_args_code[-1] == ",":
+                s_args_code = s_args_code[:-1]
+            args_code += s_args_code
         has_kwargs = not self.marshal.is_empty(s_kwargs)
         if has_args and has_kwargs:
-            code += ", "
+            args_code += ", "
         if has_kwargs:
-            code += "**" + self.unserialize_code(s_kwargs)
-        return key + "(" + code + ")"
+            args_code += "**" + self.unserialize_code(s_kwargs)
+        return self.c_funcref_by_key(key) + "(" + args_code + ")"
+
+    def c_funcref_by_key(self, key):
+        kk = key.split(".")
+        if self.is_object_method(key):
+            return self.gen_obj_name(key) + "." + kk[2]
+        if self.is_module_function(key):
+            return key
+        assert False, "Unknown key type: " + key
+
+    def is_object_method(self, key):
+        kk = key.split(".")
+        return len(kk) == 3
+
+    def is_module_function(self, key):
+        kk = key.split(".")
+        return len(kk) == 2
+
+    def gen_obj_name(self, key):
+        kk = key.split(".")
+        return "instanceof" + kk[1]
+
+    def get_object_info(self, id, key):
+        object_name = self.gen_obj_name(key)
+        kk = key.split(".")
+        module_name = kk[0]
+        class_name = kk[1]
+        consructor_args = None
+        return (object_name, class_name, module_name, consructor_args)
+
+    def c_replay_object(self, id, key):
+        (object_name, class_name, module_name, consructor_args) = self.get_object_info(id, key)
+        code = ""
+        code += "    import " + module_name + "\n"
+        code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(consructor_args) if consructor_args else "") + ")\n"
+        return code
 
     def test_code(self):
         code =  "import unittest \n" + \
                 "from ent import * \n\n" + \
                 "import ent \n\n"
+                # TODO generate import code
         mockmap = {}
         for (id, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
             if self.callhistory.isMockable(id):
@@ -421,22 +469,29 @@ class TestCodegen:
                 except KeyError:
                     mockmap[self.callhistory.caller[id]] = [id]
         code += self.mock_code(set())
-        code += "class TestEnt(unittest.TestCase): \n\n"
+        code += "class TestEnt(unittest.TestCase): \n\n" # TODO generate classname
         for (id, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
             if not self.callhistory.isTestable(id):
                 continue
             code += "  def " + self.gen_func_name("test", key, str(id)) + "(self):\n"
+            # Arrange
             functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[id]]) if id in mockmap else set()
             code += self.mock_setup_code(functions_to_mock)
             if self.marshal.is_exception(s_exc):
                 code += "    try:\n"
+                # Act
                 code += "      " + self.c_call_function(key, s_args, s_kwargs) + "\n"
+                # Assert
                 code += "      self.fail('An exception should have been thrown.')\n"
                 code += "    except Exception, e:\n"
                 code += "      # expected: " + s_exc + "\n"
                 code += "      pass\n"
             else:
+                if self.is_object_method(key):
+                    code += self.c_replay_object(id, key)
+                # Act
                 code += "    actual = " + self.c_call_function(key, s_args, s_kwargs) + "\n"
+                # Assert
                 code += "    expected = " + self.unserialize_code(s_res) + "\n"
                 code += "    self.assertEqual(expected, actual)\n"
             code += self.mock_teardown_code(functions_to_mock)
@@ -444,4 +499,17 @@ class TestCodegen:
         code += "if __name__ == '__main__': \n" + \
                 "  unittest.main() \n"
         return code
+
+import types
+def is_instance_method(obj):
+    """Checks if an object is a bound method on an instance.
+       @author http://stackoverflow.com/users/107366/ants-aasma
+    """
+    if not isinstance(obj, types.MethodType):
+        return False # Not a method
+    if obj.im_self is None:
+        return False # Method is not bound
+    if issubclass(obj.im_class, type) or obj.im_class is types.ClassType:
+        return False # Method is a classmethod
+    return True
 

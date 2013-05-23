@@ -22,6 +22,13 @@ try:
 except:
     pass
 
+# class method capture
+import ent_class
+E = ent_class.Ent()
+utg.capture_object_methods(E)
+E.factor(2313)
+E.primitive_root(2311)
+
 # write out the capture log
 utg.write_capture_log('capture.log')
 
