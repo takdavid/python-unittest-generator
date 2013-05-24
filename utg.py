@@ -390,7 +390,7 @@ class CallHistory(CallHistoryBuilder):
         for tupl in self.iterCalls():
             if tupl[0] >= tick:
                 break
-            if self.object_calls.get(tupl[0], None):
+            if self.object_calls.get(tupl[0], None) == objid:
                 yield tupl
 
     def iterCalls(self, keyFilter=None):
@@ -402,7 +402,7 @@ class CallHistory(CallHistoryBuilder):
 
 class ObjectInfo:
 
-    def is_insideeffect(self, method_name, class_name, module_name, constructor_args, s_args, s_kwargs):
+    def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         if class_name == "Ent":
             if method_name in ["factor", "trial_division", "primitive_root", "powermod"]:
                 return False
@@ -500,22 +500,19 @@ class TestCodegen:
 
     def c_funcref_by_key(self, callkey):
         if callkey.is_object_method():
-            return self.gen_obj_name(callkey) + "." + callkey.function_name
+            return self.gen_obj_name(callkey.class_name) + "." + callkey.function_name
         if callkey.is_module_function():
             return callkey.module_name + "." + callkey.function_name
         assert False, "Unknown key type: " + str(callkey)
 
-    def gen_obj_name(self, callkey):
+    def gen_obj_name(self, class_name):
         # TODO if there is more than one object for the class?!
-        return "instanceof" + callkey.class_name
+        return "instanceof" + class_name
 
-    def get_object_info(self, callkey):
-        object_name = self.gen_obj_name(callkey)
+    # TODO eliminate callkey, use object id or a class id
+    def c_replay_object(self, tick, class_name, module_name):
+        object_name = self.gen_obj_name(class_name)
         constructor_args = None
-        return (object_name, callkey.class_name, callkey.module_name, constructor_args)
-
-    def c_replay_object(self, tick, callkey):
-        (object_name, class_name, module_name, constructor_args) = self.get_object_info(callkey)
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
@@ -528,7 +525,7 @@ class TestCodegen:
                 # If it's an object: if it's captured, store $id$ only; if it's not, serialize it. 
                 # When replaying, look at the actual arg: if it's $id$, replay it here recursively.
                 old_k = CallKey.unserialize(old_key)
-                if self.is_insideeffect(old_k, old_s_args, old_s_kwargs):
+                if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
                     code += self.c_replay_call_args(tick, old_s_args)
                     code += "    " + self.c_call_function(old_k, old_s_args, old_s_kwargs) + "\n"
         return code
@@ -539,14 +536,13 @@ class TestCodegen:
         args = Repo.marshal().unserialize(old_s_args)
         for arg in args:
             if self.callhistory.is_captured_object(arg):
-                code += self.c_replay_object(tick, callkey)
+                fake_callkey = CallKey(WHAT, WHAT, WHAT) # TODO
+                code += self.c_replay_object(tick, class_name, module_name)
         return code
 
-    def is_insideeffect(self, callkey, s_args, s_kwargs):
-        (object_name, class_name, module_name, constructor_args) = self.get_object_info(callkey)
-        method_name = callkey.function_name
+    def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         oi = ObjectInfo()
-        return oi.is_insideeffect(method_name, class_name, module_name, constructor_args, s_args, s_kwargs)
+        return oi.is_insideeffect(method_name, class_name, module_name, s_args, s_kwargs)
 
     def test_code(self):
         code =  "import unittest \n" + \
@@ -582,7 +578,7 @@ class TestCodegen:
                 code += "      pass\n"
             else:
                 if callkey.is_object_method():
-                    code += self.c_replay_object(tick, callkey)
+                    code += self.c_replay_object(tick, callkey.class_name, callkey.module_name)
                 # Act
                 code += "    actual = " + self.c_call_function(callkey, s_args, s_kwargs) + "\n"
                 # Assert

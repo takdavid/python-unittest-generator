@@ -30,8 +30,8 @@ utg.capture_object_methods(E)
 # E.the_answer = 42
 # TODO:
 X = ent_class.InsideEnt()
-# utg.capture_object_methods(X)
-# X.x("X")
+utg.capture_object_methods(X)
+X.x("X")
 # E.x(X)
 E.enable()
 E.factor(2313)
