@@ -526,14 +526,17 @@ class TestCodegen:
             # TODO resolve old_s_kwargs recursively too
             old_k = CallKey.unserialize(old_key)
             if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
-                (code2, s_args2) = self.c_replay_call_args(tick, old_s_args)
+                (code2, old_s_args2) = self.c_replay_call_args(tick, old_s_args)
                 code += code2
                 full_function_name = object_name + "." + old_k.function_name
-                code += "    " + self.c_call_function(full_function_name, s_args2, old_s_kwargs) + "\n"
+                code += "    " + self.c_call_function(full_function_name, old_s_args2, old_s_kwargs) + "\n"
         return (code, object_name)
 
     def is_object_reference(self, arg):
         return isinstance(arg, str) and arg[0] == "$" and arg[-1] == "$"
+
+    def unserialize_object_reference(self, arg):
+        return int(arg[1:-1])
 
     def c_replay_call_args(self, tick, old_s_args):
         code = ""
@@ -541,7 +544,7 @@ class TestCodegen:
         args2 = []
         for arg in args:
             if self.is_object_reference(arg):
-                objid = int(arg[1:-1])
+                objid = self.unserialize_object_reference(arg)
                 (code2, object_name) = self.c_replay_object(tick, objid)
                 code += code2
                 args2.append(object_name)
