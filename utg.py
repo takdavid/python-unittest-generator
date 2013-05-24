@@ -486,7 +486,7 @@ class TestCodegen:
             code += "    " + orig_func_name + " = " + old_func_name + "\n"
         return code
 
-    def c_call_function(self, callkey, s_args, s_kwargs):
+    def c_call_function(self, full_function_name, s_args, s_kwargs):
         args_code = ""
         has_args = not self.marshal.is_empty(s_args)
         if has_args:
@@ -499,7 +499,7 @@ class TestCodegen:
             args_code += ", "
         if has_kwargs:
             args_code += "**" + self.unserialize_code(s_kwargs)
-        return self.c_funcref_by_key(callkey) + "(" + args_code + ")"
+        return full_function_name + "(" + args_code + ")"
 
     def c_funcref_by_key(self, callkey):
         if callkey.is_object_method():
@@ -516,7 +516,7 @@ class TestCodegen:
         callkey = CallKey.unserialize(self.callhistory.key_for_object_id[objid])
         class_name = callkey.class_name
         module_name = callkey.module_name
-        object_name = self.gen_obj_name(class_name)
+        object_name = "instanceof" + class_name + str(objid)
         constructor_args = None
         code = ""
         code += "    import " + module_name + "\n"
@@ -528,7 +528,8 @@ class TestCodegen:
             if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
                 (code2, s_args2) = self.c_replay_call_args(tick, old_s_args)
                 code += code2
-                code += "    " + self.c_call_function(old_k, s_args2, old_s_kwargs) + "\n"
+                full_function_name = object_name + "." + old_k.function_name
+                code += "    " + self.c_call_function(full_function_name, s_args2, old_s_kwargs) + "\n"
         return (code, object_name)
 
     def is_object_reference(self, arg):
@@ -575,23 +576,26 @@ class TestCodegen:
             # Arrange
             functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[tick]]) if tick in mockmap else set()
             code += self.mock_setup_code(functions_to_mock)
+            if callkey.is_object_method():
+                (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
+                full_function_name = object_name + "." + callkey.function_name
+                code += code2
+            else:
+                full_function_name = callkey.module_name + "." + callkey.function_name
+            (code2, s_args2) = self.c_replay_call_args(tick, s_args)
+            code += code2
             if self.marshal.is_exception(s_exc):
-                code += "    try:\n"
                 # Act
-                code += "      " + self.c_call_function(callkey, s_args, s_kwargs) + "\n"
+                code += "    try:\n"
+                code += "      " + self.c_call_function(full_function_name, s_args2, s_kwargs) + "\n"
                 # Assert
                 code += "      self.fail('An exception should have been thrown.')\n"
                 code += "    except Exception, e:\n"
                 code += "      # expected: " + s_exc + "\n"
                 code += "      pass\n"
             else:
-                if callkey.is_object_method():
-                    (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
-                    code += code2
                 # Act
-                (code2, s_args2) = self.c_replay_call_args(tick, s_args)
-                code += code2
-                code += "    actual = " + self.c_call_function(callkey, s_args2, s_kwargs) + "\n"
+                code += "    actual = " + self.c_call_function(full_function_name, s_args2, s_kwargs) + "\n"
                 # Assert
                 code += "    expected = " + self.unserialize_code(s_res) + "\n"
                 code += "    self.assertEqual(expected, actual)\n"
