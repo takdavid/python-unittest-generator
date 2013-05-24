@@ -6,8 +6,8 @@ class Ent:
     def __init__(self):
         self.enabled = False
 
-    def enable(self):
-        self.enabled = True
+    def enable(self, x):
+        self.enabled = x.value
 
     def x(self, X):
         self.X = X
@@ -52,5 +52,5 @@ class Ent:
 
 class InsideEnt:
     def x(self, x):
-        self.x = x
+        self.value = x
 

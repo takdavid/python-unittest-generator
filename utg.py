@@ -44,7 +44,7 @@ def capture(function):
         tick = callhistory.get_tick()
         if is_instance_method(function):
             callkey = CallKey(function.im_self.__module__, function.im_self.__class__.__name__, function.__name__)
-            callhistory.call_object(tick, id(function.im_self))
+            callhistory.call_object(tick, id(function.im_self), str(callkey))
         else:
             callkey = CallKey(function.__module__, None, function.__name__)
         args2 = callhistory.replace_args(args)
@@ -193,14 +193,16 @@ class CallHistoryBuilder(object):
         self.log = []
         self.indent = ""
         self.directive = {}
-        self.object_calls = {}
+        self.object_id_for_tick = {}
+        self.key_for_object_id = {}
 
     def replay(self, that):
         for (indent, what, tick) in self.linear:
             that.indent = indent
             if what == 'enter':
-                if self.object_calls.get(tick):
-                    that.call_object(tick, self.object_calls[tick])
+                if self.object_id_for_tick.get(tick):
+                    objid = self.object_id_for_tick[tick]
+                    that.call_object(tick, objid, self.key_for_object_id[objid])
                 that.call_enter(tick, * self.calls[tick])
             elif what == 'result':
                 that.call_result(tick, * self.results[tick])
@@ -215,8 +217,9 @@ class CallHistoryBuilder(object):
     def get_indent(self):
         return self.indent
 
-    def call_object(self, tick, objid):
-        self.object_calls[tick] = objid
+    def call_object(self, tick, objid, key):
+        self.object_id_for_tick[tick] = objid
+        self.key_for_object_id[objid] = key
 
     def call_enter(self, tick, key, s_args, s_kwargs):
         self.calls[tick] = [str(key), s_args, s_kwargs]
@@ -233,7 +236,7 @@ class CallHistoryBuilder(object):
         return tick in self.directive and "MOCK" in self.directive[tick]
 
     def is_captured_object(self, arg):
-        return id(arg) in self.object_calls.values()
+        return id(arg) in self.object_id_for_tick.values()
 
     def replace_args(self, args):
         args2 = []
@@ -253,8 +256,8 @@ class CallHistoryWriter(CallHistoryBuilder):
         self.log.append(str)
 
     def call_enter(self, tick, key, s_args, s_kwargs):
-        if self.object_calls.get(tick):
-            objidpart = "$" + str(self.object_calls[tick]) + "$"
+        if self.object_id_for_tick.get(tick):
+            objidpart = "$" + str(self.object_id_for_tick[tick]) + "$"
         else:
             objidpart = ""
         self.write(self.get_indent() + "CALL " + str(key) + " " + objidpart)
@@ -336,7 +339,7 @@ class CallHistoryParser(CallHistoryBuilder):
                     call[3] = m.group(2)
                 self.indent = indent
                 if objid:
-                    self.call_object(tick, objid)
+                    self.call_object(tick, objid, key)
                 self.call_enter(*call)
                 continue
             m = re.match("^(\s*)(MOCK|SKIP|TEST) (.*?)\s*$", line)
@@ -390,7 +393,7 @@ class CallHistory(CallHistoryBuilder):
         for tupl in self.iterCalls():
             if tupl[0] >= tick:
                 break
-            if self.object_calls.get(tupl[0], None) == objid:
+            if self.object_id_for_tick.get(tupl[0], None) == objid:
                 yield tupl
 
     def iterCalls(self, keyFilter=None):
@@ -509,36 +512,41 @@ class TestCodegen:
         # TODO if there is more than one object for the class?!
         return "instanceof" + class_name
 
-    # TODO eliminate callkey, use object id or a class id
-    def c_replay_object(self, tick, class_name, module_name):
+    def c_replay_object(self, tick, objid):
+        callkey = CallKey.unserialize(self.callhistory.key_for_object_id[objid])
+        class_name = callkey.class_name
+        module_name = callkey.module_name
         object_name = self.gen_obj_name(class_name)
         constructor_args = None
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
-        if self.callhistory.object_calls.get(tick):
-            objid = self.callhistory.object_calls[tick]
-            code += "    # $" + str(objid) + "$\n"
-            for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
-                # TODO resolve old_s_*args recursively (for handling object arguments too)
-                # When capturing, look at the actual arg.
-                # If it's an object: if it's captured, store $id$ only; if it's not, serialize it. 
-                # When replaying, look at the actual arg: if it's $id$, replay it here recursively.
-                old_k = CallKey.unserialize(old_key)
-                if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
-                    code += self.c_replay_call_args(tick, old_s_args)
-                    code += "    " + self.c_call_function(old_k, old_s_args, old_s_kwargs) + "\n"
-        return code
+        code += "    # $" + str(objid) + "$\n"
+        for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
+            # TODO resolve old_s_kwargs recursively too
+            old_k = CallKey.unserialize(old_key)
+            if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
+                (code2, s_args2) = self.c_replay_call_args(tick, old_s_args)
+                code += code2
+                code += "    " + self.c_call_function(old_k, s_args2, old_s_kwargs) + "\n"
+        return (code, object_name)
+
+    def is_object_reference(self, arg):
+        return isinstance(arg, str) and arg[0] == "$" and arg[-1] == "$"
 
     def c_replay_call_args(self, tick, old_s_args):
-        return "" # TODO
         code = ""
         args = Repo.marshal().unserialize(old_s_args)
+        args2 = []
         for arg in args:
-            if self.callhistory.is_captured_object(arg):
-                fake_callkey = CallKey(WHAT, WHAT, WHAT) # TODO
-                code += self.c_replay_object(tick, class_name, module_name)
-        return code
+            if self.is_object_reference(arg):
+                objid = int(arg[1:-1])
+                (code2, object_name) = self.c_replay_object(tick, objid)
+                code += code2
+                args2.append(object_name)
+            else:
+                args2.append(Repo.marshal().serialize(arg))
+        return (code, "[" + ", ".join(args2) + "]") # TODO serialize in marshal, not here
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         oi = ObjectInfo()
@@ -578,9 +586,12 @@ class TestCodegen:
                 code += "      pass\n"
             else:
                 if callkey.is_object_method():
-                    code += self.c_replay_object(tick, callkey.class_name, callkey.module_name)
+                    (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
+                    code += code2
                 # Act
-                code += "    actual = " + self.c_call_function(callkey, s_args, s_kwargs) + "\n"
+                (code2, s_args2) = self.c_replay_call_args(tick, s_args)
+                code += code2
+                code += "    actual = " + self.c_call_function(callkey, s_args2, s_kwargs) + "\n"
                 # Assert
                 code += "    expected = " + self.unserialize_code(s_res) + "\n"
                 code += "    self.assertEqual(expected, actual)\n"
