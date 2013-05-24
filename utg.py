@@ -47,7 +47,8 @@ def capture(function):
             callhistory.call_object(tick, id(function.im_self))
         else:
             callkey = CallKey(function.__module__, None, function.__name__)
-        callhistory.call_enter(tick, str(callkey), serialize(args), serialize(kwargs))
+        args2 = callhistory.replace_args(args)
+        callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs))
         try:
             ret = function(*args, **kwargs)
             callhistory.call_result(tick, serialize(ret), serialize(None))
@@ -231,6 +232,18 @@ class CallHistoryBuilder(object):
     def isMockable(self, tick):
         return tick in self.directive and "MOCK" in self.directive[tick]
 
+    def is_captured_object(self, arg):
+        return id(arg) in self.object_calls.values()
+
+    def replace_args(self, args):
+        args2 = []
+        for arg in args:
+            if self.is_captured_object(arg):
+                args2.append("$" + str(id(arg)) + "$")
+            else:
+                args2.append(arg)
+        return args2
+
 class CallHistoryWriter(CallHistoryBuilder):
 
     def __init__(self):
@@ -387,7 +400,6 @@ class CallHistory(CallHistoryBuilder):
             (s_res, s_exc) = self.results[tick]
             yield (tick, key, s_args, s_kwargs, s_res, s_exc)
 
-
 class ObjectInfo:
 
     def is_insideeffect(self, method_name, class_name, module_name, constructor_args, s_args, s_kwargs):
@@ -494,6 +506,7 @@ class TestCodegen:
         assert False, "Unknown key type: " + str(callkey)
 
     def gen_obj_name(self, callkey):
+        # TODO if there is more than one object for the class?!
         return "instanceof" + callkey.class_name
 
     def get_object_info(self, callkey):
@@ -516,7 +529,17 @@ class TestCodegen:
                 # When replaying, look at the actual arg: if it's $id$, replay it here recursively.
                 old_k = CallKey.unserialize(old_key)
                 if self.is_insideeffect(old_k, old_s_args, old_s_kwargs):
+                    code += self.c_replay_call_args(tick, old_s_args)
                     code += "    " + self.c_call_function(old_k, old_s_args, old_s_kwargs) + "\n"
+        return code
+
+    def c_replay_call_args(self, tick, old_s_args):
+        return "" # TODO
+        code = ""
+        args = Repo.marshal().unserialize(old_s_args)
+        for arg in args:
+            if self.callhistory.is_captured_object(arg):
+                code += self.c_replay_object(tick, callkey)
         return code
 
     def is_insideeffect(self, callkey, s_args, s_kwargs):

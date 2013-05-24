@@ -9,6 +9,9 @@ class Ent:
     def enable(self):
         self.enabled = True
 
+    def x(self, X):
+        self.X = X
+
     def trial_division(self, n, bound=None):
         assert self.enabled
         return ent.trial_division(n, bound=bound)
@@ -46,4 +49,8 @@ class Ent:
             if generates: return a
             a += 1
         assert False, "p must be prime."
+
+class InsideEnt:
+    def x(self, x):
+        self.x = x
 
