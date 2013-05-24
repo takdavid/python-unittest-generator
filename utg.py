@@ -375,6 +375,16 @@ class CallHistory(CallHistoryBuilder):
             (s_res, s_exc) = self.results[id]
             yield (id, key, s_args, s_kwargs, s_res, s_exc)
 
+
+class ObjectInfo:
+
+    def is_insideeffect(self, method_name, class_name, module_name, consructor_args, s_args, s_kwargs):
+        if class_name == "Ent":
+            if method_name in ["factor", "trial_division", "primitive_root", "powermod"]:
+                return False
+        return True
+
+
 class TestCodegen:
 
     def __init__(self, callhistory, marshal):
@@ -443,6 +453,8 @@ class TestCodegen:
             return key
         assert False, "Unknown key type: " + key
 
+    # TODO move key generation and parsing out to its own class
+
     def is_object_method(self, key):
         kk = key.split(".")
         return len(kk) == 3
@@ -455,7 +467,7 @@ class TestCodegen:
         kk = key.split(".")
         return "instanceof" + kk[1]
 
-    def get_object_info(self, id, key):
+    def get_object_info(self, key):
         object_name = self.gen_obj_name(key)
         kk = key.split(".")
         module_name = kk[0]
@@ -463,8 +475,14 @@ class TestCodegen:
         consructor_args = None
         return (object_name, class_name, module_name, consructor_args)
 
+    def get_method_name(self, key):
+        kk = key.split(".")
+        return kk[2]
+
+    # TODO rename id to callid or timestamp everywhere
+
     def c_replay_object(self, id, key):
-        (object_name, class_name, module_name, consructor_args) = self.get_object_info(id, key)
+        (object_name, class_name, module_name, consructor_args) = self.get_object_info(key)
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(consructor_args) if consructor_args else "") + ")\n"
@@ -472,9 +490,18 @@ class TestCodegen:
             objid = self.callhistory.object_calls[id]
             code += "    # object id " + str(objid) + "\n"
             for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.get_object_history_until(id, objid):
-                code += "    " + self.c_call_function(old_key, old_s_args, old_s_kwargs) + "\n"
+                # TODO resolve old_s_*args recursively (for handling object arguments too)
+                if self.is_insideeffect(old_key, old_s_args, old_s_kwargs):
+                    code += "    " + self.c_call_function(old_key, old_s_args, old_s_kwargs) + "\n"
         return code
 
+    def is_insideeffect(self, key, s_args, s_kwargs):
+        (object_name, class_name, module_name, consructor_args) = self.get_object_info(key)
+        method_name = self.get_method_name(key)
+        oi = ObjectInfo()
+        return oi.is_insideeffect(method_name, class_name, module_name, consructor_args, s_args, s_kwargs)
+
+    # TODO move to callhistory
     def get_object_history_until(self, callid, objid):
         for tupl in self.callhistory.iterCalls():
             if tupl[0] >= callid:
