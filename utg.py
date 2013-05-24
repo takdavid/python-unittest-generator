@@ -523,18 +523,19 @@ class TestCodegen:
         return "instanceof" + class_name
 
     def c_replay_object(self, tick, objid):
-        # TODO avoid multiple resolution of the same object at the same tick point
         callkey = CallKey.unserialize(self.callhistory.key_for_object_id[objid])
         class_name = callkey.class_name
         module_name = callkey.module_name
         object_name = "instanceof" + class_name + str(objid)
+        cache_key = str(objid) + "@" + str(tick)
+        if self.replay_cache.get(cache_key):
+            return ("", object_name)
+        self.replay_cache[cache_key] = True
         constructor_args = None
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
-        code += "    # $" + str(objid) + "$\n"
         for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
-            # TODO resolve old_s_kwargs recursively too
             old_k = CallKey.unserialize(old_key)
             if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
                 (code2, old_s_args2) = self.c_replay_call_args(tick, old_s_args)
@@ -563,7 +564,8 @@ class TestCodegen:
                 args2.append(object_name)
             else:
                 args2.append(Repo.marshal().serialize(arg))
-        return (code, "[" + ", ".join(args2) + "]") # TODO serialize in marshal, not here
+        # TODO serialize in marshal, not here
+        return (code, "[" + ", ".join(args2) + "]")
 
     def c_replay_call_kwargs(self, tick, old_s_kwargs):
         code = ""
@@ -577,11 +579,15 @@ class TestCodegen:
                 kwargs2[argname] = object_name
             else:
                 kwargs2[argname] = Repo.marshal().serialize(argvalue)
-        return (code, ", ".join([ argname + "=" + argvalue for (argname, argvalue) in kwargs2.iteritems() ])) # TODO serialize in marshal, not here
+        # TODO serialize in marshal, not here
+        return (code, ", ".join([ argname + "=" + argvalue for (argname, argvalue) in kwargs2.iteritems() ]))
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         oi = ObjectInfo()
         return oi.is_insideeffect(method_name, class_name, module_name, s_args, s_kwargs)
+
+    def clear_replay_cache(self):
+        self.replay_cache = {}
 
     def test_code(self):
         code =  "import unittest \n" + \
@@ -601,6 +607,7 @@ class TestCodegen:
         for (tick, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
             if not self.callhistory.isTestable(tick):
                 continue
+            self.clear_replay_cache()
             callkey = CallKey.unserialize(key)
             code += "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
             # Arrange
