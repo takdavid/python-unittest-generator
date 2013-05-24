@@ -368,6 +368,13 @@ class CallHistory(CallHistoryBuilder):
         self.stack.popWhile(lambda item: item[0] != id)
         self.linear.append((self.get_indent(), 'result', id, ))
 
+    def get_object_history_until(self, callid, objid):
+        for tupl in self.iterCalls():
+            if tupl[0] >= callid:
+                break
+            if self.object_calls.get(tupl[0], None):
+                yield tupl
+
     def iterCalls(self, keyFilter=None):
         for (id, (key, s_args, s_kwargs)) in self.calls.iteritems():
             if keyFilter and key != keyFilter:
@@ -489,7 +496,7 @@ class TestCodegen:
         if self.callhistory.object_calls.get(id):
             objid = self.callhistory.object_calls[id]
             code += "    # object id " + str(objid) + "\n"
-            for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.get_object_history_until(id, objid):
+            for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(id, objid):
                 # TODO resolve old_s_*args recursively (for handling object arguments too)
                 if self.is_insideeffect(old_key, old_s_args, old_s_kwargs):
                     code += "    " + self.c_call_function(old_key, old_s_args, old_s_kwargs) + "\n"
@@ -500,14 +507,6 @@ class TestCodegen:
         method_name = self.get_method_name(key)
         oi = ObjectInfo()
         return oi.is_insideeffect(method_name, class_name, module_name, consructor_args, s_args, s_kwargs)
-
-    # TODO move to callhistory
-    def get_object_history_until(self, callid, objid):
-        for tupl in self.callhistory.iterCalls():
-            if tupl[0] >= callid:
-                break
-            if self.callhistory.object_calls.get(tupl[0], None):
-                yield tupl
 
     def test_code(self):
         code =  "import unittest \n" + \
