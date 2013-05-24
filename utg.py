@@ -198,7 +198,7 @@ class CallHistoryBuilder(object):
         for (indent, what, id) in self.linear:
             that.indent = indent
             if what == 'enter':
-                if self.object_calls.has_key(id):
+                if self.object_calls.get(id):
                     that.call_object(id, self.object_calls[id])
                 that.call_enter(id, * self.calls[id])
             elif what == 'result':
@@ -240,7 +240,7 @@ class CallHistoryWriter(CallHistoryBuilder):
         self.log.append(str)
 
     def call_enter(self, id, key, s_args, s_kwargs):
-        if self.object_calls.has_key(id):
+        if self.object_calls.get(id):
             objidpart = "$" + str(self.object_calls[id]) + "$"
         else:
             objidpart = ""
@@ -468,7 +468,7 @@ class TestCodegen:
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(consructor_args) if consructor_args else "") + ")\n"
-        if self.callhistory.object_calls.has_key(id): # TODO use a getter instead of this has_key
+        if self.callhistory.object_calls.get(id):
             objid = self.callhistory.object_calls[id]
             code += "    # object id " + str(objid) + "\n"
             for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.get_object_history_until(id, objid):
@@ -477,9 +477,9 @@ class TestCodegen:
 
     def get_object_history_until(self, callid, objid):
         for tupl in self.callhistory.iterCalls():
-            if tupl[0] == callid:
+            if tupl[0] >= callid:
                 break
-            if self.callhistory.object_calls.has_key(tupl[0]) and self.callhistory.object_calls[tupl[0]] == objid:
+            if self.callhistory.object_calls.get(tupl[0], None):
                 yield tupl
 
     def test_code(self):
