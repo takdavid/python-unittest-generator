@@ -43,11 +43,11 @@ def capture(function):
         callhistory = Repo.callhistory()
         callid = callhistory.get_tick()
         if is_instance_method(function):
-            key = function.im_self.__module__ + "." + function.im_self.__class__.__name__ + "." + function.__name__
+            callkey = CallKey(function.im_self.__module__, function.im_self.__class__.__name__, function.__name__)
             callhistory.call_object(callid, id(function.im_self))
         else:
-            key = function.__module__ + "." + function.__name__
-        callhistory.call_enter(callid, key, serialize(args), serialize(kwargs))
+            callkey = CallKey(function.__module__, None, function.__name__)
+        callhistory.call_enter(callid, str(callkey), serialize(args), serialize(kwargs))
         try:
             ret = function(*args, **kwargs)
             callhistory.call_result(callid, serialize(ret), serialize(None))
@@ -177,7 +177,7 @@ class Reachability:
 
     def updatePathTo(self, key, path):
         for (depth, item) in path:
-            self.update(item[1], key, depth)
+            self.update(item[1], str(key), depth)
 
     def matrix(self):
         return self._reachability
@@ -218,7 +218,7 @@ class CallHistoryBuilder(object):
         self.object_calls[callid] = objid
 
     def call_enter(self, tick, key, s_args, s_kwargs):
-        self.calls[tick] = [key, s_args, s_kwargs]
+        self.calls[tick] = [str(key), s_args, s_kwargs]
         self.linear.append((self.get_indent(), 'enter', tick, ))
 
     def call_result(self, tick, s_res, s_exc):
@@ -244,7 +244,7 @@ class CallHistoryWriter(CallHistoryBuilder):
             objidpart = "$" + str(self.object_calls[tick]) + "$"
         else:
             objidpart = ""
-        self.write(self.get_indent() + "CALL " + key + " " + objidpart)
+        self.write(self.get_indent() + "CALL " + str(key) + " " + objidpart)
         self.write(self.get_indent() + "ARGS " + s_args)
         self.write(self.get_indent() + "KWARGS " + s_kwargs)
 
@@ -265,6 +265,7 @@ class CallHistoryParser(CallHistoryBuilder):
     def setDirective(self, indent, key, directive):
         if not directive:
             return
+        key = str(key)
         if not key in self._parse_directives:
             self._parse_directives[key] = {}
         if not directive in self._parse_directives[key]:
@@ -276,11 +277,13 @@ class CallHistoryParser(CallHistoryBuilder):
             self.unsetDirective(indent, key, "TEST")
 
     def unsetDirective(self, indent, key, directive):
+        key = str(key)
         if key in self._parse_directives and directive in self._parse_directives[key]:
             self._parse_directives[key][directive].remove(indent)
 
     def getDirectives(self, indent, key):
         dirs = set() 
+        key = str(key)
         if key in self._parse_directives:
             for directive in self._parse_directives[key]:
                 for ind in self._parse_directives[key][directive]:
@@ -290,6 +293,7 @@ class CallHistoryParser(CallHistoryBuilder):
 
     def invalidateDirectives(self, indent, keyFilter=None):
         for key in self._parse_directives.keys():
+            key = str(key)
             if not keyFilter or key == keyFilter:
                 for directive in self._parse_directives[key].keys():
                     for ind in self._parse_directives[key][directive]:
@@ -353,6 +357,7 @@ class CallHistory(CallHistoryBuilder):
         return self.stack.get_indent()
 
     def call_enter(self, tick, key, s_args, s_kwargs):
+        key = str(key)
         # TODO eliminate this indent thing -- use own stack or something
         self.linear.append((self.get_indent(), 'enter', tick, ))
         self.calls[tick] = [key, s_args, s_kwargs]
@@ -392,6 +397,35 @@ class ObjectInfo:
         return True
 
 
+class CallKey:
+
+    def __init__(self, module_name, class_name, function_name):
+        self.module_name = module_name
+        self.class_name = class_name
+        self.function_name = function_name
+
+    @staticmethod
+    def unserialize(key):
+        kk = key.split(".")
+        if len(kk) == 3:
+            return CallKey(kk[0], kk[1], kk[2])
+        if len(kk) == 2:
+            return CallKey(kk[0], None, kk[1])
+        assert False, "Unknown key type: " + key
+
+    def serialize(self):
+        return str(self)
+
+    def __str__(self):
+        return self.module_name + "." + (self.class_name + "." if self.class_name else "") + self.function_name
+
+    def is_object_method(self):
+        return self.class_name is not None
+
+    def is_module_function(self):
+        return self.class_name is None
+
+
 class TestCodegen:
 
     def __init__(self, callhistory, marshal):
@@ -399,7 +433,7 @@ class TestCodegen:
         self.marshal = marshal
 
     def gen_func_name(self, *parts):
-        return "_".join(map(lambda str: str.replace('.', '_'), parts))
+        return "_".join(map(lambda elem: str(elem).replace('.', '_'), parts))
 
     def unserialize_code(self, serialized):
         return serialized
@@ -409,7 +443,7 @@ class TestCodegen:
         for key in set([item[0] for item in self.callhistory.calls.itervalues()]):
             mock_func_name = self.gen_func_name("mock", key)
             code += "def " + mock_func_name + "(*args, **kwargs):\n"
-            for (tick, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls(keyFilter=key):
+            for (tick, _key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls(keyFilter=key):
                 c_args = self.unserialize_code(s_args or self.marshal.empty_list())
                 c_kwargs = self.unserialize_code(s_kwargs or self.marshal.empty_dict())
                 c_ret = self.unserialize_code(s_res or self.marshal.none())
@@ -437,7 +471,7 @@ class TestCodegen:
             code += "    " + orig_func_name + " = " + old_func_name + "\n"
         return code
 
-    def c_call_function(self, key, s_args, s_kwargs):
+    def c_call_function(self, callkey, s_args, s_kwargs):
         args_code = ""
         has_args = not self.marshal.is_empty(s_args)
         if has_args:
@@ -450,44 +484,25 @@ class TestCodegen:
             args_code += ", "
         if has_kwargs:
             args_code += "**" + self.unserialize_code(s_kwargs)
-        return self.c_funcref_by_key(key) + "(" + args_code + ")"
+        return self.c_funcref_by_key(callkey) + "(" + args_code + ")"
 
-    def c_funcref_by_key(self, key):
-        kk = key.split(".")
-        if self.is_object_method(key):
-            return self.gen_obj_name(key) + "." + kk[2]
-        if self.is_module_function(key):
-            return key
-        assert False, "Unknown key type: " + key
+    def c_funcref_by_key(self, callkey):
+        if callkey.is_object_method():
+            return self.gen_obj_name(callkey) + "." + callkey.function_name
+        if callkey.is_module_function():
+            return callkey.module_name + "." + callkey.function_name
+        assert False, "Unknown key type: " + str(callkey)
 
-    # TODO move key generation and parsing out to its own class
+    def gen_obj_name(self, callkey):
+        return "instanceof" + callkey.class_name
 
-    def is_object_method(self, key):
-        kk = key.split(".")
-        return len(kk) == 3
-
-    def is_module_function(self, key):
-        kk = key.split(".")
-        return len(kk) == 2
-
-    def gen_obj_name(self, key):
-        kk = key.split(".")
-        return "instanceof" + kk[1]
-
-    def get_object_info(self, key):
-        object_name = self.gen_obj_name(key)
-        kk = key.split(".")
-        module_name = kk[0]
-        class_name = kk[1]
+    def get_object_info(self, callkey):
+        object_name = self.gen_obj_name(callkey)
         consructor_args = None
-        return (object_name, class_name, module_name, consructor_args)
+        return (object_name, callkey.class_name, callkey.module_name, consructor_args)
 
-    def get_method_name(self, key):
-        kk = key.split(".")
-        return kk[2]
-
-    def c_replay_object(self, tick, key):
-        (object_name, class_name, module_name, consructor_args) = self.get_object_info(key)
+    def c_replay_object(self, tick, callkey):
+        (object_name, class_name, module_name, consructor_args) = self.get_object_info(callkey)
         code = ""
         code += "    import " + module_name + "\n"
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(consructor_args) if consructor_args else "") + ")\n"
@@ -496,13 +511,14 @@ class TestCodegen:
             code += "    # $" + str(objid) + "$\n"
             for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
                 # TODO resolve old_s_*args recursively (for handling object arguments too)
-                if self.is_insideeffect(old_key, old_s_args, old_s_kwargs):
-                    code += "    " + self.c_call_function(old_key, old_s_args, old_s_kwargs) + "\n"
+                old_k = CallKey.unserialize(old_key)
+                if self.is_insideeffect(old_k, old_s_args, old_s_kwargs):
+                    code += "    " + self.c_call_function(old_k, old_s_args, old_s_kwargs) + "\n"
         return code
 
-    def is_insideeffect(self, key, s_args, s_kwargs):
-        (object_name, class_name, module_name, consructor_args) = self.get_object_info(key)
-        method_name = self.get_method_name(key)
+    def is_insideeffect(self, callkey, s_args, s_kwargs):
+        (object_name, class_name, module_name, consructor_args) = self.get_object_info(callkey)
+        method_name = callkey.function_name
         oi = ObjectInfo()
         return oi.is_insideeffect(method_name, class_name, module_name, consructor_args, s_args, s_kwargs)
 
@@ -512,7 +528,8 @@ class TestCodegen:
                 "import ent \n\n"
                 # TODO generate import code
         mockmap = {}
-        for (tick, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
+        for tupl in self.callhistory.iterCalls():
+            tick = tupl[0]
             if self.callhistory.isMockable(tick):
                 try:
                     mockmap[self.callhistory.caller[tick]].append(tick)
@@ -523,24 +540,25 @@ class TestCodegen:
         for (tick, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
             if not self.callhistory.isTestable(tick):
                 continue
-            code += "  def " + self.gen_func_name("test", key, str(tick)) + "(self):\n"
+            callkey = CallKey.unserialize(key)
+            code += "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
             # Arrange
             functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[tick]]) if tick in mockmap else set()
             code += self.mock_setup_code(functions_to_mock)
             if self.marshal.is_exception(s_exc):
                 code += "    try:\n"
                 # Act
-                code += "      " + self.c_call_function(key, s_args, s_kwargs) + "\n"
+                code += "      " + self.c_call_function(callkey, s_args, s_kwargs) + "\n"
                 # Assert
                 code += "      self.fail('An exception should have been thrown.')\n"
                 code += "    except Exception, e:\n"
                 code += "      # expected: " + s_exc + "\n"
                 code += "      pass\n"
             else:
-                if self.is_object_method(key):
-                    code += self.c_replay_object(tick, key)
+                if callkey.is_object_method():
+                    code += self.c_replay_object(tick, callkey)
                 # Act
-                code += "    actual = " + self.c_call_function(key, s_args, s_kwargs) + "\n"
+                code += "    actual = " + self.c_call_function(callkey, s_args, s_kwargs) + "\n"
                 # Assert
                 code += "    expected = " + self.unserialize_code(s_res) + "\n"
                 code += "    self.assertEqual(expected, actual)\n"
