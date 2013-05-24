@@ -48,7 +48,8 @@ def capture(function):
         else:
             callkey = CallKey(function.__module__, None, function.__name__)
         args2 = callhistory.replace_args(args)
-        callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs))
+        kwargs2 = callhistory.replace_kwargs(kwargs)
+        callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs2))
         try:
             ret = function(*args, **kwargs)
             callhistory.call_result(tick, serialize(ret), serialize(None))
@@ -246,6 +247,15 @@ class CallHistoryBuilder(object):
             else:
                 args2.append(arg)
         return args2
+
+    def replace_kwargs(self, kwargs):
+        kwargs2 = {}
+        for (argname, argvalue) in kwargs.iteritems():
+            if self.is_captured_object(argvalue):
+                kwargs2[argname] = "$" + str(id(argvalue)) + "$"
+            else:
+                kwargs2[argname] = argvalue
+        return kwargs2
 
 class CallHistoryWriter(CallHistoryBuilder):
 
@@ -498,7 +508,7 @@ class TestCodegen:
         if has_args and has_kwargs:
             args_code += ", "
         if has_kwargs:
-            args_code += "**" + self.unserialize_code(s_kwargs)
+            args_code += self.unserialize_code(s_kwargs)
         return full_function_name + "(" + args_code + ")"
 
     def c_funcref_by_key(self, callkey):
@@ -513,6 +523,7 @@ class TestCodegen:
         return "instanceof" + class_name
 
     def c_replay_object(self, tick, objid):
+        # TODO avoid multiple resolution of the same object at the same tick point
         callkey = CallKey.unserialize(self.callhistory.key_for_object_id[objid])
         class_name = callkey.class_name
         module_name = callkey.module_name
@@ -528,8 +539,10 @@ class TestCodegen:
             if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
                 (code2, old_s_args2) = self.c_replay_call_args(tick, old_s_args)
                 code += code2
+                (code2, old_s_kwargs2) = self.c_replay_call_kwargs(tick, old_s_kwargs)
+                code += code2
                 full_function_name = object_name + "." + old_k.function_name
-                code += "    " + self.c_call_function(full_function_name, old_s_args2, old_s_kwargs) + "\n"
+                code += "    " + self.c_call_function(full_function_name, old_s_args2, old_s_kwargs2) + "\n"
         return (code, object_name)
 
     def is_object_reference(self, arg):
@@ -551,6 +564,20 @@ class TestCodegen:
             else:
                 args2.append(Repo.marshal().serialize(arg))
         return (code, "[" + ", ".join(args2) + "]") # TODO serialize in marshal, not here
+
+    def c_replay_call_kwargs(self, tick, old_s_kwargs):
+        code = ""
+        kwargs = Repo.marshal().unserialize(old_s_kwargs)
+        kwargs2 = {}
+        for (argname, argvalue) in kwargs.iteritems():
+            if self.is_object_reference(argvalue):
+                objid = self.unserialize_object_reference(argvalue)
+                (code2, object_name) = self.c_replay_object(tick, objid)
+                code += code2
+                kwargs2[argname] = object_name
+            else:
+                kwargs2[argname] = Repo.marshal().serialize(argvalue)
+        return (code, ", ".join([ argname + "=" + argvalue for (argname, argvalue) in kwargs2.iteritems() ])) # TODO serialize in marshal, not here
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         oi = ObjectInfo()
@@ -587,10 +614,12 @@ class TestCodegen:
                 full_function_name = callkey.module_name + "." + callkey.function_name
             (code2, s_args2) = self.c_replay_call_args(tick, s_args)
             code += code2
+            (code2, s_kwargs2) = self.c_replay_call_kwargs(tick, s_kwargs)
+            code += code2
             if self.marshal.is_exception(s_exc):
                 # Act
                 code += "    try:\n"
-                code += "      " + self.c_call_function(full_function_name, s_args2, s_kwargs) + "\n"
+                code += "      " + self.c_call_function(full_function_name, s_args2, s_kwargs2) + "\n"
                 # Assert
                 code += "      self.fail('An exception should have been thrown.')\n"
                 code += "    except Exception, e:\n"
@@ -598,7 +627,7 @@ class TestCodegen:
                 code += "      pass\n"
             else:
                 # Act
-                code += "    actual = " + self.c_call_function(full_function_name, s_args2, s_kwargs) + "\n"
+                code += "    actual = " + self.c_call_function(full_function_name, s_args2, s_kwargs2) + "\n"
                 # Assert
                 code += "    expected = " + self.unserialize_code(s_res) + "\n"
                 code += "    self.assertEqual(expected, actual)\n"

@@ -31,7 +31,7 @@ utg.capture_object_methods(E)
 X = ent_class.InsideEnt()
 utg.capture_object_methods(X)
 X.x(True)
-E.enable(X)
+E.enable(X, y=X)
 E.factor(2313)
 E.primitive_root(2311)
 

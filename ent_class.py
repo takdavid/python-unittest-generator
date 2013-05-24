@@ -6,8 +6,8 @@ class Ent:
     def __init__(self):
         self.enabled = False
 
-    def enable(self, x):
-        self.enabled = x.value
+    def enable(self, x, y=None):
+        self.enabled = x and x.value and y and y.value
 
     def x(self, X):
         self.X = X
