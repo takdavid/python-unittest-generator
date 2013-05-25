@@ -1,4 +1,6 @@
 """ unit test generator """
+import re
+import types
 
 """ The default run mode is non-capture. """
 runmode = "test" # "capture" or "test"
@@ -18,8 +20,6 @@ def test_mode():
 def callablesOf(obj):
     """ Return all callable attributes of the argument. """
     return [getattr(obj, method) for method in dir(obj) if callable(getattr(obj, method))]
-
-import re
 
 def capture_module_functions(mod, exclude=None):
     """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
@@ -96,7 +96,25 @@ def write_test_code(filename):
     f.write(gen_test_code())
     f.close()
 
+
+# helpers
+
+
+def is_instance_method(obj):
+    """Checks if an object is a bound method on an instance.
+       @author http://stackoverflow.com/users/107366/ants-aasma
+    """
+    if not isinstance(obj, types.MethodType):
+        return False # Not a method
+    if obj.im_self is None:
+        return False # Method is not bound
+    if issubclass(obj.im_class, type) or obj.im_class is types.ClassType:
+        return False # Method is a classmethod
+    return True
+
+
 # classes
+
 
 class Repo:
     """ Factory and repository. """
@@ -115,11 +133,14 @@ class Repo:
             Repo._callhistory = CallHistory()
         return Repo._callhistory;
 
+
 class AbstractMarshal:
     def serialize(self, obj): pass
     def unserialize(self, obj): pass
 
+
 class ReprMarshal (AbstractMarshal):
+
     def serialize(self, obj):
         return repr(obj)
 
@@ -164,6 +185,7 @@ class Stack(list):
     def get_indent(self):
         return "".join([ "    " for i in range(len(self))])
 
+
 class Reachability:
 
     def __init__(self):
@@ -183,6 +205,7 @@ class Reachability:
 
     def matrix(self):
         return self._reachability
+
 
 class CallHistoryBuilder(object):
 
@@ -257,6 +280,7 @@ class CallHistoryBuilder(object):
                 kwargs2[argname] = argvalue
         return kwargs2
 
+
 class CallHistoryWriter(CallHistoryBuilder):
 
     def __init__(self):
@@ -280,7 +304,6 @@ class CallHistoryWriter(CallHistoryBuilder):
         else:
             self.write(self.get_indent() + "RAISE " + s_exc)
 
-import re
 
 class CallHistoryParser(CallHistoryBuilder):
 
@@ -371,6 +394,7 @@ class CallHistoryParser(CallHistoryBuilder):
                 continue
             raise Exception("ERROR INVALID LINE " + line)
 
+
 class CallHistory(CallHistoryBuilder):
 
     def __init__(self):
@@ -413,9 +437,11 @@ class CallHistory(CallHistoryBuilder):
             (s_res, s_exc) = self.results[tick]
             yield (tick, key, s_args, s_kwargs, s_res, s_exc)
 
+
 class ObjectInfo:
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
+        # TODO hardwired
         if class_name == "Ent":
             if method_name in ["factor", "trial_division", "primitive_root", "powermod"]:
                 return False
@@ -668,17 +694,4 @@ class TestCodegen:
         code += self.mock_teardown_code(self.functions_to_mock(tick))
         code += "\n"
         return code
-
-import types
-def is_instance_method(obj):
-    """Checks if an object is a bound method on an instance.
-       @author http://stackoverflow.com/users/107366/ants-aasma
-    """
-    if not isinstance(obj, types.MethodType):
-        return False # Not a method
-    if obj.im_self is None:
-        return False # Method is not bound
-    if issubclass(obj.im_class, type) or obj.im_class is types.ClassType:
-        return False # Method is a classmethod
-    return True
 
