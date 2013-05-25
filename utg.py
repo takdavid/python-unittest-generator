@@ -538,17 +538,6 @@ class TestCodegen:
             args_code += self.unserialize_code(s_kwargs)
         return full_function_name + "(" + args_code + ")"
 
-    def c_funcref_by_key(self, callkey):
-        if callkey.is_object_method():
-            return self.gen_obj_name(callkey.class_name) + "." + callkey.function_name
-        if callkey.is_module_function():
-            return callkey.module_name + "." + callkey.function_name
-        assert False, "Unknown key type: " + str(callkey)
-
-    def gen_obj_name(self, class_name):
-        # TODO if there is more than one object for the class?!
-        return "instanceof" + class_name
-
     def c_replay_object(self, tick, objid):
         callkey = CallKey.unserialize(self.callhistory.key_for_object_id[objid])
         class_name = callkey.class_name
@@ -650,7 +639,8 @@ class TestCodegen:
 
     def gen_test_class_code(self):
         self.init_mockmap()
-        code = "class TestEnt(unittest.TestCase): \n\n" # TODO generate classname
+        # TODO different test cases
+        code = "class TestAll(unittest.TestCase): \n\n"
         for tupl in self.callhistory.iterCalls():
             tick = tupl[0]
             if not self.callhistory.isTestable(tick):
@@ -666,6 +656,7 @@ class TestCodegen:
         code = "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
         # Arrange
         code += self.mock_setup_code(self.functions_to_mock(tick))
+        # TODO static class methods
         if callkey.is_object_method():
             (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
             full_function_name = object_name + "." + callkey.function_name
