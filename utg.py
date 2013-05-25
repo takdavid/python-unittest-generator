@@ -456,6 +456,7 @@ class TestCodegen:
     def __init__(self, callhistory, marshal):
         self.callhistory = callhistory
         self.marshal = marshal
+        self.import_modules = set()
 
     def gen_func_name(self, *parts):
         return "_".join(map(lambda elem: str(elem).replace('.', '_'), parts))
@@ -533,7 +534,7 @@ class TestCodegen:
         self.replay_cache[cache_key] = True
         constructor_args = None
         code = ""
-        code += "    import " + module_name + "\n"
+        self.import_modules.add(module_name)
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
         for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
             old_k = CallKey.unserialize(old_key)
@@ -589,11 +590,13 @@ class TestCodegen:
     def clear_replay_cache(self):
         self.replay_cache = {}
 
+    def c_import_modules(self):
+        self.import_modules.remove("__main__")
+        return "\n".join([ "import " + module_name for module_name in self.import_modules ]) + "\n\n"
+
     def test_code(self):
-        code =  "import unittest \n" + \
-                "from ent import * \n\n" + \
-                "import ent \n\n"
-                # TODO generate import code
+        self.import_modules.add("unittest")
+        code =  ""
         mockmap = {}
         for tupl in self.callhistory.iterCalls():
             tick = tupl[0]
@@ -609,6 +612,7 @@ class TestCodegen:
                 continue
             self.clear_replay_cache()
             callkey = CallKey.unserialize(key)
+            self.import_modules.add(callkey.module_name)
             code += "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
             # Arrange
             functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[tick]]) if tick in mockmap else set()
@@ -642,7 +646,7 @@ class TestCodegen:
             code += "\n"
         code += "if __name__ == '__main__': \n" + \
                 "  unittest.main() \n"
-        return code
+        return self.c_import_modules() + code
 
 import types
 def is_instance_method(obj):
