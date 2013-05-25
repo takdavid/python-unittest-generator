@@ -594,59 +594,80 @@ class TestCodegen:
         self.import_modules.remove("__main__")
         return "\n".join([ "import " + module_name for module_name in self.import_modules ]) + "\n\n"
 
-    def test_code(self):
-        self.import_modules.add("unittest")
-        code =  ""
-        mockmap = {}
+    def init_mockmap(self):
+        self.mockmap = {}
         for tupl in self.callhistory.iterCalls():
             tick = tupl[0]
             if self.callhistory.isMockable(tick):
                 try:
-                    mockmap[self.callhistory.caller[tick]].append(tick)
+                    self.mockmap[self.callhistory.caller[tick]].append(tick)
                 except KeyError:
-                    mockmap[self.callhistory.caller[tick]] = [tick]
+                    self.mockmap[self.callhistory.caller[tick]] = [tick]
+
+    def functions_to_mock(self, tick):
+        if tick in self.mockmap:
+            return set([self.callhistory.calls[mockid][0] for mockid in self.mockmap[tick]])
+        else:
+            return set()
+
+    def test_code(self):
+        return self.gen_test_file_code()
+
+    def gen_test_file_code(self):
+        self.import_modules.add("unittest")
+        code =  ""
         code += self.mock_code(set())
-        code += "class TestEnt(unittest.TestCase): \n\n" # TODO generate classname
-        for (tick, key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
-            if not self.callhistory.isTestable(tick):
-                continue
-            self.clear_replay_cache()
-            callkey = CallKey.unserialize(key)
-            self.import_modules.add(callkey.module_name)
-            code += "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
-            # Arrange
-            functions_to_mock = set([self.callhistory.calls[mockid][0] for mockid in mockmap[tick]]) if tick in mockmap else set()
-            code += self.mock_setup_code(functions_to_mock)
-            if callkey.is_object_method():
-                (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
-                full_function_name = object_name + "." + callkey.function_name
-                code += code2
-            else:
-                full_function_name = callkey.module_name + "." + callkey.function_name
-            (code2, s_args2) = self.c_replay_call_args(tick, s_args)
-            code += code2
-            (code2, s_kwargs2) = self.c_replay_call_kwargs(tick, s_kwargs)
-            code += code2
-            if self.marshal.is_exception(s_exc):
-                # Act
-                code += "    try:\n"
-                code += "      " + self.c_call_function(full_function_name, s_args2, s_kwargs2) + "\n"
-                # Assert
-                code += "      self.fail('An exception should have been thrown.')\n"
-                code += "    except Exception, e:\n"
-                code += "      # expected: " + s_exc + "\n"
-                code += "      pass\n"
-            else:
-                # Act
-                code += "    actual = " + self.c_call_function(full_function_name, s_args2, s_kwargs2) + "\n"
-                # Assert
-                code += "    expected = " + self.unserialize_code(s_res) + "\n"
-                code += "    self.assertEqual(expected, actual)\n"
-            code += self.mock_teardown_code(functions_to_mock)
-            code += "\n"
+        code += self.gen_test_class_code()
         code += "if __name__ == '__main__': \n" + \
                 "  unittest.main() \n"
         return self.c_import_modules() + code
+
+    def gen_test_class_code(self):
+        self.init_mockmap()
+        code = "class TestEnt(unittest.TestCase): \n\n" # TODO generate classname
+        for tupl in self.callhistory.iterCalls():
+            tick = tupl[0]
+            if not self.callhistory.isTestable(tick):
+                continue
+            code += self.gen_test_method_code(tupl)
+        return code
+
+    def gen_test_method_code(self, call_info):
+        (tick, key, s_args, s_kwargs, s_res, s_exc) = call_info
+        self.clear_replay_cache()
+        callkey = CallKey.unserialize(key)
+        self.import_modules.add(callkey.module_name)
+        code = "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
+        # Arrange
+        code += self.mock_setup_code(self.functions_to_mock(tick))
+        if callkey.is_object_method():
+            (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
+            full_function_name = object_name + "." + callkey.function_name
+            code += code2
+        else:
+            full_function_name = callkey.module_name + "." + callkey.function_name
+        (code2, s_args2) = self.c_replay_call_args(tick, s_args)
+        code += code2
+        (code2, s_kwargs2) = self.c_replay_call_kwargs(tick, s_kwargs)
+        code += code2
+        if self.marshal.is_exception(s_exc):
+            code += "    try:\n"
+            # Act
+            code += "      " + self.c_call_function(full_function_name, s_args2, s_kwargs2) + "\n"
+            # Assert
+            code += "      self.fail('An exception should have been thrown.')\n"
+            code += "    except Exception, e:\n"
+            code += "      # expected: " + s_exc + "\n"
+            code += "      pass\n"
+        else:
+            # Act
+            code += "    actual = " + self.c_call_function(full_function_name, s_args2, s_kwargs2) + "\n"
+            # Assert
+            code += "    expected = " + self.unserialize_code(s_res) + "\n"
+            code += "    self.assertEqual(expected, actual)\n"
+        code += self.mock_teardown_code(self.functions_to_mock(tick))
+        code += "\n"
+        return code
 
 import types
 def is_instance_method(obj):
