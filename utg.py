@@ -97,12 +97,16 @@ def gen_capture_log():
     Repo.callhistory().replay(hw)
     return hw.log
 
+# TODO def set_capture_log_writer(fileobj)
+
 def write_capture_log(filename):
     """ Write out the capture log to a file. """
     f = open(filename, 'w')
     for line in gen_capture_log():
         f.write(line + "\n")
     f.close()
+
+# TODO def read_capture_log(fileobj)
 
 def read_capture_log(filename):
     """ Read in the capture log from a file. """
@@ -115,6 +119,8 @@ def read_capture_log(filename):
 def gen_test_code():
     """ Generate the test code in a string. """
     return TestCodegen(Repo.callhistory(), Repo.marshal()).test_code()
+
+# TODO def write_test_code(fileobj)
 
 def write_test_code(filename):
     """ Write out the test code to a file. """
