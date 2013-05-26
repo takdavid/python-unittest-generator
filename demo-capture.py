@@ -26,8 +26,8 @@ except:
 import ent_class
 E = ent_class.Ent()
 utg.capture_object_methods(E)
-# TODO utg.capture_object_properties(E)
-# E.the_answer = 42
+utg.capture_object_properties(E)
+E.the_answer = 42
 X = ent_class.InsideEnt()
 utg.capture_object_methods(X)
 X.x(True)

@@ -21,6 +21,10 @@ def callablesOf(obj):
     """ Return all callable attributes of the argument. """
     return [getattr(obj, method) for method in dir(obj) if callable(getattr(obj, method))]
 
+def propertiesOf(obj):
+    """ Return all properties of the argument. """
+    return [(prop, getattr(obj, prop)) for prop in dir(obj) if not callable(getattr(obj, prop))]
+
 def capture_module_functions(mod, exclude=None):
     """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
     for fun in callablesOf(mod):
@@ -28,10 +32,32 @@ def capture_module_functions(mod, exclude=None):
             setattr(mod, fun.__name__, capture(fun))
 
 def capture_object_methods(obj, re_exclude=None):
-    """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
+    """ Decorates all functions of the object, except the explicitely excluded ones. """
+    # TODO do not decorate already decorated (~inherited) ones
     for fun in callablesOf(obj):
         if (not re_exclude or not re.match(re_exclude, fun.__name__)):
             setattr(obj, fun.__name__, capture(fun))
+
+def _setattr_object_property(obj, name, value):
+    print "SETATTR " + str(id(obj)) + "." + name + " = " + repr(value)
+    serialize = Repo.marshal().serialize
+    callhistory = Repo.callhistory()
+    tick = callhistory.get_tick()
+    callkey = CallKey(obj.__module__, obj.__class__.__name__, "__setattr__")
+    callhistory.call_object(tick, id(obj), str(callkey))
+    callhistory.call_enter(tick, str(callkey), serialize([name, value]), serialize({}))
+    callhistory.call_result(tick, serialize(None), serialize(None))
+
+def _setattr_wrapper(self, name, value):
+    print "WRAP!"
+    _setattr_object_property(self, name, value)
+    self.__dict__[name] = value
+    # TODO what if obj has a __setattr__ already
+
+def capture_object_properties(obj):
+    """ Decorates all properties of the object. """
+    # TODO do not decorate already decorated (~inherited) ones
+    obj.__class__.__setattr__ = types.MethodType(_setattr_wrapper, None, obj.__class__)
 
 def capture(function):
     """ Decorator which captures the args and the return values or the exception of the function. """
@@ -536,6 +562,10 @@ class TestCodegen:
             args_code += ", "
         if has_kwargs:
             args_code += self.unserialize_code(s_kwargs)
+        fn_parts = full_function_name.split(".")
+        if len(fn_parts) == 2 and fn_parts[1] == "__setattr__":
+            # TODO switch to more natural x.y = z syntax here
+            return "setattr(" + fn_parts[0] + ", " + args_code + ")"
         return full_function_name + "(" + args_code + ")"
 
     def c_replay_object(self, tick, objid):
