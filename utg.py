@@ -25,6 +25,9 @@ def propertiesOf(obj):
     """ Return all properties of the argument. """
     return [(prop, getattr(obj, prop)) for prop in dir(obj) if not callable(getattr(obj, prop))]
 
+# TODO def capture_class(klass)
+# """ Decorates everything in a class: constructors, static methods, instance methods, and properties (?) """
+
 def capture_module_functions(mod, exclude=None):
     """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
     for fun in callablesOf(mod):
@@ -33,13 +36,12 @@ def capture_module_functions(mod, exclude=None):
 
 def capture_object_methods(obj, re_exclude=None):
     """ Decorates all functions of the object, except the explicitely excluded ones. """
-    # TODO do not decorate already decorated (~inherited) ones
+    # TODO do not decorate already decorated (~inherited) ones - decorator registry dict?
     for fun in callablesOf(obj):
         if (not re_exclude or not re.match(re_exclude, fun.__name__)):
             setattr(obj, fun.__name__, capture(fun))
 
 def _setattr_object_property(obj, name, value):
-    print "SETATTR " + str(id(obj)) + "." + name + " = " + repr(value)
     serialize = Repo.marshal().serialize
     callhistory = Repo.callhistory()
     tick = callhistory.get_tick()
@@ -49,7 +51,6 @@ def _setattr_object_property(obj, name, value):
     callhistory.call_result(tick, serialize(None), serialize(None))
 
 def _setattr_wrapper(self, name, value):
-    print "WRAP!"
     _setattr_object_property(self, name, value)
     self.__dict__[name] = value
     # TODO what if obj has a __setattr__ already
@@ -68,11 +69,14 @@ def capture(function):
         serialize = Repo.marshal().serialize
         callhistory = Repo.callhistory()
         tick = callhistory.get_tick()
-        if is_instance_method(function):
+        if is_bound_method(function):
             callkey = CallKey(function.im_self.__module__, function.im_self.__class__.__name__, function.__name__)
             callhistory.call_object(tick, id(function.im_self), str(callkey))
-        else:
+        elif is_module_function(function):
             callkey = CallKey(function.__module__, None, function.__name__)
+        else:
+            raise Exception("Unknown object to capture " + repr(function))
+            # TODO lambda
         args2 = callhistory.replace_args(args)
         kwargs2 = callhistory.replace_kwargs(kwargs)
         callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs2))
@@ -132,7 +136,7 @@ def write_test_code(filename):
 # helpers
 
 
-def is_instance_method(obj):
+def is_bound_method(obj):
     """Checks if an object is a bound method on an instance.
        @author http://stackoverflow.com/users/107366/ants-aasma
     """
@@ -144,6 +148,19 @@ def is_instance_method(obj):
         return False # Method is a classmethod
     return True
 
+def is_unbound_method(obj):
+    if not isinstance(obj, types.MethodType):
+        return False # Not a method
+    if getattr(obj, "im_self") is not None:
+        return False # Bound method
+    return True
+
+def is_module_function(obj):
+    if hasattr(obj, "im_self"):
+        return False # Bound method
+    if hasattr(obj, "im_class") and (issubclass(obj.im_class, type) or obj.im_class is types.ClassType):
+        return False # Method is a classmethod
+    return True
 
 # classes
 
@@ -642,7 +659,8 @@ class TestCodegen:
         self.replay_cache = {}
 
     def c_import_modules(self):
-        self.import_modules.remove("__main__")
+        if "__main__" in self.import_modules:
+            self.import_modules.remove("__main__")
         return "\n".join([ "import " + module_name for module_name in self.import_modules ]) + "\n\n"
 
     def init_mockmap(self):
