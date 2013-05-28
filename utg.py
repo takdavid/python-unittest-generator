@@ -64,12 +64,12 @@ def _setattr_object_property(obj, name, value):
 
 def _setattr_wrapper(self, name, value):
     _setattr_object_property(self, name, value)
-    self.__dict__[name] = value
-    # TODO what if obj has a __setattr__ already
-    # TODO replace_args
+    (value2,) = Repo.callhistory().replace_args([value])
+    self.__dict__[name] = value2
 
 def capture_object_properties(obj):
     """ Decorates all properties of the object. """
+    # TODO what if class has a __setattr__ already
     # TODO re_exclude
     # TODO do not decorate already decorated (~inherited) ones
     obj.__class__.__setattr__ = types.MethodType(_setattr_wrapper, None, obj.__class__)
@@ -325,11 +325,16 @@ class CallHistoryBuilder(object):
         return tick in self.directive and "MOCK" in self.directive[tick]
 
     def is_captured_object(self, arg):
+        # TODO use reverse hash
         return id(arg) in self.object_id_for_tick.values()
 
     def replace_args(self, args):
         args2 = []
         for arg in args:
+            # TODO deep replace for arrays
+            #if isinstance(arg, list):
+            #    arg = self.replace_args(arg)
+            # TODO deep replace for other container types
             if self.is_captured_object(arg):
                 args2.append("$" + str(id(arg)) + "$")
             else:
