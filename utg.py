@@ -31,7 +31,7 @@ def capture_class(klass, re_exclude=None):
         originit = klass.__init__
         def initwrapper(self, *args, **kwargs):
             capture_object_methods(self, re_exclude)
-            capture_object_properties(self, re_exclude)
+            capture_object_properties(self)
             init = types.MethodType(originit, None, klass)
             init(self, *args, **kwargs)
         klass.__init__ = initwrapper
@@ -66,9 +66,11 @@ def _setattr_wrapper(self, name, value):
     _setattr_object_property(self, name, value)
     self.__dict__[name] = value
     # TODO what if obj has a __setattr__ already
+    # TODO replace_args
 
 def capture_object_properties(obj):
     """ Decorates all properties of the object. """
+    # TODO re_exclude
     # TODO do not decorate already decorated (~inherited) ones
     obj.__class__.__setattr__ = types.MethodType(_setattr_wrapper, None, obj.__class__)
 
@@ -77,6 +79,7 @@ def capture(function):
     global runmode
     if runmode != "capture":
         return function
+    # TODO do not decorate already decorated ones
     def wrapper(*args, **kwargs):
         serialize = Repo.marshal().serialize
         callhistory = Repo.callhistory()
@@ -629,7 +632,7 @@ class TestCodegen:
         return (code, object_name)
 
     def is_object_reference(self, arg):
-        return isinstance(arg, str) and arg[0] == "$" and arg[-1] == "$"
+        return isinstance(arg, str) and len(arg) > 2 and arg[0] == "$" and arg[-1] == "$"
 
     def unserialize_object_reference(self, arg):
         return int(arg[1:-1])
