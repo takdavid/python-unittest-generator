@@ -19,14 +19,26 @@ def test_mode():
 
 def callablesOf(obj):
     """ Return all callable attributes of the argument. """
-    return [getattr(obj, method) for method in dir(obj) if callable(getattr(obj, method))]
+    return [getattr(obj, method) for method in dir(obj) if callable(getattr(obj, method)) and not method[0:2] == "__"]
 
 def propertiesOf(obj):
     """ Return all properties of the argument. """
-    return [(prop, getattr(obj, prop)) for prop in dir(obj) if not callable(getattr(obj, prop))]
+    return [(prop, getattr(obj, prop)) for prop in dir(obj) if not callable(getattr(obj, prop)) and not method[0:2] == "__"]
 
-# TODO def capture_class(klass)
-# """ Decorates everything in a class: constructors, static methods, instance methods, and properties (?) """
+def capture_class(klass, re_exclude=None):
+    """ Decorates everything in a class: constructors, static methods, instance methods, and properties (?) """
+    if hasattr(klass, "__init__"):
+        originit = klass.__init__
+        def initwrapper(self, *args, **kwargs):
+            capture_object_methods(self, re_exclude)
+            capture_object_properties(self, re_exclude)
+            init = types.MethodType(originit, None, klass)
+            init(self, *args, **kwargs)
+        klass.__init__ = initwrapper
+    else:
+        def newinit(self):
+            capture_object_methods(self, re_exclude)
+        klass.__init__ = newinit
 
 def capture_module_functions(mod, exclude=None):
     """ Decorates all functions of the module, except the imported and the explicitely excluded ones. """
@@ -77,6 +89,7 @@ def capture(function):
         else:
             raise Exception("Unknown object to capture " + repr(function))
             # TODO lambda
+            # TODO generators
         args2 = callhistory.replace_args(args)
         kwargs2 = callhistory.replace_kwargs(kwargs)
         callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs2))

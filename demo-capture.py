@@ -22,14 +22,14 @@ try:
 except:
     pass
 
-# class method capture
+# setup captures
 import ent_class
 E = ent_class.Ent()
 utg.capture_object_methods(E)
 utg.capture_object_properties(E)
 E.the_answer = 42
+utg.capture_class(ent_class.InsideEnt)
 X = ent_class.InsideEnt()
-utg.capture_object_methods(X)
 X.x(True)
 E.enable(X, y=X)
 E.factor(2313)
