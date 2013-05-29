@@ -517,16 +517,26 @@ class CallHistory(CallHistoryBuilder):
         self.linear.append((self.get_indent(), 'result', tick, ))
 
     def get_object_history_until(self, tick, objid):
-        for tupl in self.iterCalls():
+        if not getattr(self, "object_history", False):
+            self.build_object_history_cache()
+        for tupl in self.object_history[objid]:
             if tupl[0] >= tick:
                 break
             if self.object_id_for_tick.get(tupl[0], None) == objid:
                 yield tupl
 
-    def iterCalls(self, keyFilter=None):
+    def build_object_history_cache(self):
+        self.object_history = {}
+        for tupl in self.iterCalls():
+            objid = self.object_id_for_tick.get(tupl[0], None)
+            if objid:
+                if objid in self.object_history:
+                    self.object_history[objid].append(tupl)
+                else:
+                    self.object_history[objid] = [tupl]
+
+    def iterCalls(self):
         for (tick, (key, s_args, s_kwargs)) in self.calls.iteritems():
-            if keyFilter and key != keyFilter:
-                continue
             (s_res, s_exc) = self.results[tick]
             yield (tick, key, s_args, s_kwargs, s_res, s_exc)
 
@@ -589,12 +599,14 @@ class TestCodegen:
     def unserialize_code(self, serialized):
         return serialized
 
-    def mock_code(self, something):
+    def mock_code(self):
         code = ""
         for key in set([item[0] for item in self.callhistory.calls.itervalues()]):
             mock_func_name = self.gen_func_name("mock", key)
             code += "def " + mock_func_name + "(*args, **kwargs):\n"
-            for (tick, _key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls(keyFilter=key):
+            for (tick, _key, s_args, s_kwargs, s_res, s_exc) in self.callhistory.iterCalls():
+                if _key != key:
+                    continue
                 c_args = self.unserialize_code(s_args or self.marshal.empty_list())
                 c_kwargs = self.unserialize_code(s_kwargs or self.marshal.empty_dict())
                 c_ret = self.unserialize_code(s_res or self.marshal.none())
@@ -655,6 +667,7 @@ class TestCodegen:
         self.import_modules.add(module_name)
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
         self.local_scope.add(object_name)
+        # TODO build is_insideeffect cache
         for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
             old_k = CallKey.unserialize(old_key)
             if self.testbuilderinfo.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
@@ -737,16 +750,17 @@ class TestCodegen:
         return self.gen_test_file_code()
 
     def gen_test_file_code(self):
-        self.import_modules.add("unittest")
         code =  ""
-        code += self.mock_code(set())
+        self.import_modules.add("unittest")
+        self.init_mockmap()
+        if len(self.mockmap):
+            code += self.mock_code()
         code += self.gen_test_class_code()
         code += "if __name__ == '__main__': \n" + \
                 "  unittest.main() \n"
         return self.c_import_modules() + code
 
     def gen_test_class_code(self):
-        self.init_mockmap()
         methods_code = ""
         # TODO different test cases
         for tupl in self.callhistory.iterCalls():
