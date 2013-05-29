@@ -72,7 +72,7 @@ def capture_class_properties(klass, re_exclude=None):
             (value2,) = callhistory.replace_args([value])
             tick = callhistory.get_tick()
             callhistory.call_object(tick, id(self), key)
-            callhistory.call_enter(tick, key, serialize([name, value2]), serialize({}))
+            callhistory.call_enter(tick, key, [name, value2], None)
             callhistory.call_result(tick, None, None)
         self.__dict__[name] = value
     klass.__setattr__ = types.MethodType(_setattr_wrapper, None, klass)
@@ -112,6 +112,7 @@ def capture(function):
         callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs2))
         try:
             ret = function(*args, **kwargs)
+            # TODO 1 ? (ret2,) = callhistory.replace_args([ret])
             callhistory.call_result(tick, serialize(ret) if ret is not None else None, None)
             return ret
         except Exception, exc:
@@ -231,11 +232,18 @@ class AbstractMarshal:
 
 class JsonMarshal (AbstractMarshal, JSONEncoder):
 
-    def default(self, o):
-        if hasattr(o, "toJSON"):
-            return o.toJSON()
+    def encode(self, obj):
+        if isinstance(obj, tuple):
+            return {'__tuple__': obj}
+        if isinstance(obj, list):
+            return list([ self.encode(it) for it in obj ])
+        return super(JsonMarshal, self).encode(obj)
+
+    def default(self, obj):
+        if hasattr(obj, "toJSON"):
+            return obj.toJSON()
         else:
-            return json.dumps(o)
+            return json.dumps(obj)
 
     def serialize(self, obj):
         if isinstance(obj, Exception):
@@ -244,10 +252,18 @@ class JsonMarshal (AbstractMarshal, JSONEncoder):
             return "True"
         return self.encode(obj)
 
+    def loads_hook(self, obj):
+        if isinstance(obj, dict) and '__tuple__' in obj:
+            return tuple(obj['__tuple__'])
+        return obj
+
     def unserialize(self, jsonstring):
+        # TODO serialize args directly to json as much as possible
+        if not isinstance(jsonstring, str):
+            return jsonstring
         if jsonstring == "null":
             return None
-        obj = json.loads(jsonstring)
+        obj = json.loads(jsonstring, object_hook=self.loads_hook)
         if isinstance(obj, dict) and "__Exception" in obj:
             return Exception(* obj["__Exception"])
         return obj
@@ -416,14 +432,14 @@ class CallHistoryBuilder(object):
         for arg in args:
             if isinstance(arg, list):
                 arg = self.replace_args(arg)
-            if isinstance(arg, tuple):
-                arg = tuple(self.replace_args(arg))
             # TODO 1 deep replace for dict
             # TODO deep replace for other container types
             if self.is_captured_object(arg):
                 args2.append("$" + str(id(arg)) + "$")
             else:
                 args2.append(arg)
+        if isinstance(args, tuple):
+            return tuple(args2)
         return args2
 
     def replace_kwargs(self, kwargs):
@@ -927,7 +943,6 @@ class TestCodegen:
         self.clear_replay_cache()
         self.import_modules.add(callkey.module_name)
         code = "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
-        code += "    null = None\n" # TODO ugly hack
         # Arrange
         code += self.mock_setup_code(self.functions_to_mock(tick))
         # TODO 1 static class methods
