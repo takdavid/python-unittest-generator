@@ -27,11 +27,11 @@ def propertiesOf(obj):
 
 def capture_class(klass, re_exclude=None):
     """ Decorates everything in a class: constructors, static methods, instance methods, and properties (?) """
+    capture_class_properties(klass, re_exclude)
     if hasattr(klass, "__init__"):
         originit = klass.__init__
         def initwrapper(self, *args, **kwargs):
             capture_object_methods(self, re_exclude)
-            capture_object_properties(self)
             init = types.MethodType(originit, None, klass)
             init(self, *args, **kwargs)
         klass.__init__ = initwrapper
@@ -63,9 +63,17 @@ def _setattr_object_property(obj, name, value):
     callhistory.call_result(tick, serialize(None), serialize(None))
 
 def _setattr_wrapper(self, name, value):
-    _setattr_object_property(self, name, value)
-    (value2,) = Repo.callhistory().replace_args([value])
-    self.__dict__[name] = value2
+    if not callable(value):
+        (value,) = Repo.callhistory().replace_args([value])
+        _setattr_object_property(self, name, value)
+    self.__dict__[name] = value
+
+def capture_class_properties(klass, re_exclude=None):
+    """ Decorates all properties of the object. """
+    # TODO what if class has a __setattr__ already
+    # TODO re_exclude
+    # TODO do not decorate already decorated (~inherited) ones
+    klass.__setattr__ = types.MethodType(_setattr_wrapper, None, klass)
 
 def capture_object_properties(obj):
     """ Decorates all properties of the object. """
@@ -231,6 +239,18 @@ class ReprMarshal (AbstractMarshal):
         return s_exc and s_exc != self.none()
 
 
+class VarName(object):
+
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+    def __str__(self):
+        return self.name
+
+
 class Stack(list):
 
     def top(self):
@@ -331,9 +351,8 @@ class CallHistoryBuilder(object):
     def replace_args(self, args):
         args2 = []
         for arg in args:
-            # TODO deep replace for arrays
-            #if isinstance(arg, list):
-            #    arg = self.replace_args(arg)
+            if isinstance(arg, list):
+                arg = self.replace_args(arg)
             # TODO deep replace for other container types
             if self.is_captured_object(arg):
                 args2.append("$" + str(id(arg)) + "$")
@@ -342,6 +361,7 @@ class CallHistoryBuilder(object):
         return args2
 
     def replace_kwargs(self, kwargs):
+        # TODO deep replace
         kwargs2 = {}
         for (argname, argvalue) in kwargs.iteritems():
             if self.is_captured_object(argvalue):
@@ -625,6 +645,7 @@ class TestCodegen:
         code = ""
         self.import_modules.add(module_name)
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
+        self.local_scope.add(object_name)
         for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
             old_k = CallKey.unserialize(old_key)
             if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
@@ -642,20 +663,27 @@ class TestCodegen:
     def unserialize_object_reference(self, arg):
         return int(arg[1:-1])
 
-    def c_replay_call_args(self, tick, old_s_args):
+    def replay_args(self, tick, args):
         code = ""
-        args = Repo.marshal().unserialize(old_s_args)
         args2 = []
         for arg in args:
+            if isinstance(arg, list):
+                (code2, arg) = self.replay_args(tick, arg)
+                code += code2
             if self.is_object_reference(arg):
                 objid = self.unserialize_object_reference(arg)
                 (code2, object_name) = self.c_replay_object(tick, objid)
                 code += code2
-                args2.append(object_name)
+                args2.append(VarName(object_name))
             else:
                 args2.append(Repo.marshal().serialize(arg))
+        return (code, args2)
+
+    def c_replay_call_args(self, tick, old_s_args):
+        args = Repo.marshal().unserialize(old_s_args)
+        (code, args2) = self.replay_args(tick, args)
         # TODO serialize in marshal, not here
-        return (code, "[" + ", ".join(args2) + "]")
+        return (code, "[" + ", ".join([ str(arg) for arg in args2 ]) + "]")
 
     def c_replay_call_kwargs(self, tick, old_s_kwargs):
         code = ""
@@ -666,11 +694,11 @@ class TestCodegen:
                 objid = self.unserialize_object_reference(argvalue)
                 (code2, object_name) = self.c_replay_object(tick, objid)
                 code += code2
-                kwargs2[argname] = object_name
+                kwargs2[argname] = VarName(object_name)
             else:
                 kwargs2[argname] = Repo.marshal().serialize(argvalue)
         # TODO serialize in marshal, not here
-        return (code, ", ".join([ argname + "=" + argvalue for (argname, argvalue) in kwargs2.iteritems() ]))
+        return (code, ", ".join([ str(argname) + "=" + str(argvalue) for (argname, argvalue) in kwargs2.iteritems() ]))
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         oi = ObjectInfo()
@@ -725,6 +753,7 @@ class TestCodegen:
 
     def gen_test_method_code(self, call_info):
         (tick, key, s_args, s_kwargs, s_res, s_exc) = call_info
+        self.local_scope = set()
         self.clear_replay_cache()
         callkey = CallKey.unserialize(key)
         self.import_modules.add(callkey.module_name)

@@ -31,6 +31,8 @@ E.the_answer = 42
 utg.capture_class(ent_class.InsideEnt)
 X = ent_class.InsideEnt()
 X.x(True)
+E.objprop = X
+E.listprop = [X]
 E.enable(X, y=X)
 E.factor(2313)
 E.primitive_root(2311)
