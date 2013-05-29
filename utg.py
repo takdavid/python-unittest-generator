@@ -125,9 +125,9 @@ def capture(function):
 
 def gen_capture_log():
     """ Generate the capture log line by line. """
-    hw = CallHistoryWriter()
+    hw = Repo.writer()
     Repo.callhistory().replay(hw)
-    return hw.log
+    return hw.logLines()
 
 # TODO def set_capture_log_writer(fileobj)
 
@@ -142,7 +142,7 @@ def write_capture_log(filename):
 
 def read_capture_log(filename):
     """ Read in the capture log from a file. """
-    parser = CallHistoryParser()
+    parser = Repo.parser()
     l = open(filename, 'r')
     parser.parse(l.readlines())
     l.close()
@@ -201,15 +201,26 @@ class Repo:
     def marshal():
         if not isinstance(Repo._marshal, AbstractMarshal):
             Repo._marshal = ReprMarshal()
-        return Repo._marshal;
+        return Repo._marshal
 
     _callhistory = None
     @staticmethod
     def callhistory():
         if not isinstance(Repo._callhistory, CallHistory):
             Repo._callhistory = CallHistory()
-        return Repo._callhistory;
+        return Repo._callhistory
 
+    _writer = None
+    @staticmethod
+    def writer():
+        Repo._writer = CallHistoryWriterJson()
+        return Repo._writer
+
+    _parser = None
+    @staticmethod
+    def parser():
+        Repo._parser = CallHistoryParserJson()
+        return Repo._parser
 
 class AbstractMarshal:
     def serialize(self, obj): pass
@@ -322,6 +333,9 @@ class CallHistoryBuilder(object):
         for tick in self.directive:
             that.directive[tick] = self.directive[tick]
 
+    def logLines(self):
+        return []
+
     def get_tick(self):
         tick = self.tick
         self.tick += 1
@@ -375,7 +389,42 @@ class CallHistoryBuilder(object):
         return kwargs2
 
 
-# TODO 1 JSON
+import simplejson as json
+
+class CallHistoryWriterJson(CallHistoryBuilder):
+
+    def __init__(self):
+        super(CallHistoryWriterJson, self).__init__()
+        self.marshal = Repo.marshal()
+
+    def write(self, str):
+        self.log.append(str)
+
+    def logLines(self):
+        yield "["
+        for line in self.log:
+            yield line
+        yield "]"
+
+    def call_enter(self, tick, key, s_args, s_kwargs):
+        obj = { "key" : str(key) }
+        if self.object_id_for_tick.get(tick):
+            objidpart = "$" + str(self.object_id_for_tick[tick]) + "$"
+            obj["objid"] = objidpart
+        if not self.marshal.is_empty(s_args):
+            obj["args"] = s_args
+        if not self.marshal.is_empty(s_kwargs):
+            obj["kwargs"] = s_kwargs
+        self.write(self.get_indent() + '"enter", ' + str(tick) + ", " + json.dumps(obj) + ",")
+
+    def call_result(self, tick, s_res, s_exc):
+        obj = { }
+        if s_exc == "None":
+            obj = { "return" : s_res }
+        else:
+            obj = { "raise" : s_exc }
+        self.write(self.get_indent() + '"leave", ' + str(tick) + ", " + json.dumps(obj) + ",")
+
 
 class CallHistoryWriter(CallHistoryBuilder):
 
@@ -384,6 +433,9 @@ class CallHistoryWriter(CallHistoryBuilder):
 
     def write(self, str):
         self.log.append(str)
+
+    def logLines(self):
+        return self.log
 
     def call_enter(self, tick, key, s_args, s_kwargs):
         if self.object_id_for_tick.get(tick):
@@ -491,6 +543,44 @@ class CallHistoryParser(CallHistoryBuilder):
                 self.invalidateDirectives(indent)
                 continue
             raise Exception("ERROR INVALID LINE " + line)
+
+
+class CallHistoryParserJson(CallHistoryParser):
+
+    def parse(self, log):
+        """ parse annotated call history """
+        tick_for_indent = {}
+        lines = iter(log)
+        for line in lines:
+            if line.startswith("[") or line.startswith("]"):
+                continue
+            m = re.match("^(\s*)", line)
+            indent = m.group(1)
+            arr = json.loads("[" + line + "null]")
+            if arr[0] == "enter":
+                tick = arr[1]
+                direct = arr[2].get("directive")
+                key = arr[2].get("key")
+                objidpart = arr[2].get("objid")
+                objid = int(objidpart[1:-1]) if objidpart else None
+                self.setDirective(indent, key, direct)
+                self.directive[tick] = self.getDirectives(indent, key)
+                call = [tick, key, arr[2].get("args"), arr[2].get("kwargs")]
+                if objid:
+                    self.call_object(tick, objid, key)
+                self.call_enter(*call)
+                continue
+            elif arr[0] == "leave":
+                tick = arr[1]
+                self.call_result(tick, arr[2].get("return"), arr[2].get("raise"))
+                tick_for_indent[indent] = None
+                self.invalidateDirectives(indent)
+                continue
+            # TODO test this
+            elif arr[0] == "directive":
+                continue
+            raise Exception("ERROR INVALID LINE " + line)
+
 
 
 class CallHistory(CallHistoryBuilder):
@@ -708,14 +798,14 @@ class TestCodegen:
         return (code, args2)
 
     def c_replay_call_args(self, tick, old_s_args):
-        args = self.marshal.unserialize(old_s_args)
+        args = self.marshal.unserialize(old_s_args) if old_s_args else []
         (code, args2) = self.replay_args(tick, args)
         # TODO 2 serialize in marshal, not here
         return (code, "[" + ", ".join([ str(arg) for arg in args2 ]) + "]")
 
     def c_replay_call_kwargs(self, tick, old_s_kwargs):
         code = ""
-        kwargs = self.marshal.unserialize(old_s_kwargs)
+        kwargs = self.marshal.unserialize(old_s_kwargs) if old_s_kwargs else {}
         kwargs2 = {}
         for (argname, argvalue) in kwargs.iteritems():
             if self.is_object_reference(argvalue):
