@@ -63,11 +63,14 @@ def _setattr_object_property(obj, name, value):
     callhistory.call_result(tick, serialize(None), serialize(None))
 
 def _setattr_wrapper(self, name, value):
+    # TODO lambda, functions
+    # TODO generators
     if not callable(value):
-        (value,) = Repo.callhistory().replace_args([value])
-        _setattr_object_property(self, name, value)
+        (value2,) = Repo.callhistory().replace_args([value])
+        _setattr_object_property(self, name, value2)
     self.__dict__[name] = value
 
+# TODO this does not capture things like object.prop.append(...)
 def capture_class_properties(klass, re_exclude=None):
     """ Decorates all properties of the object. """
     # TODO what if class has a __setattr__ already
@@ -528,7 +531,7 @@ class CallHistory(CallHistoryBuilder):
             yield (tick, key, s_args, s_kwargs, s_res, s_exc)
 
 
-class ObjectInfo:
+class TestBuilderInfo:
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
         # TODO hardwired
@@ -536,6 +539,11 @@ class ObjectInfo:
             if method_name in ["factor", "trial_division", "primitive_root", "powermod"]:
                 return False
         return True
+
+    def skip(self, method_name, class_name, module_name, s_args, s_kwargs):
+        if method_name in ["setattr", "__setattr__"]:
+            return True
+        return False
 
 
 class CallKey:
@@ -573,6 +581,7 @@ class TestCodegen:
         self.callhistory = callhistory
         self.marshal = marshal
         self.import_modules = set()
+        self.testbuilderinfo = TestBuilderInfo()
 
     def gen_func_name(self, *parts):
         return "_".join(map(lambda elem: str(elem).replace('.', '_'), parts))
@@ -648,7 +657,7 @@ class TestCodegen:
         self.local_scope.add(object_name)
         for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
             old_k = CallKey.unserialize(old_key)
-            if self.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
+            if self.testbuilderinfo.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
                 (code2, old_s_args2) = self.c_replay_call_args(tick, old_s_args)
                 code += code2
                 (code2, old_s_kwargs2) = self.c_replay_call_kwargs(tick, old_s_kwargs)
@@ -700,10 +709,6 @@ class TestCodegen:
         # TODO serialize in marshal, not here
         return (code, ", ".join([ str(argname) + "=" + str(argvalue) for (argname, argvalue) in kwargs2.iteritems() ]))
 
-    def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
-        oi = ObjectInfo()
-        return oi.is_insideeffect(method_name, class_name, module_name, s_args, s_kwargs)
-
     def clear_replay_cache(self):
         self.replay_cache = {}
 
@@ -742,20 +747,26 @@ class TestCodegen:
 
     def gen_test_class_code(self):
         self.init_mockmap()
+        methods_code = ""
         # TODO different test cases
-        code = "class TestAll(unittest.TestCase): \n\n"
         for tupl in self.callhistory.iterCalls():
-            tick = tupl[0]
+            (tick, key, s_args, s_kwargs, s_res, s_exc) = tupl
+            callkey = CallKey.unserialize(key)
             if not self.callhistory.isTestable(tick):
                 continue
-            code += self.gen_test_method_code(tupl)
+            if self.testbuilderinfo.skip(callkey.function_name, callkey.class_name, callkey.module_name, s_args, s_kwargs):
+                continue
+            methods_code += self.gen_test_method_code(tick, key, s_args, s_kwargs, s_res, s_exc)
+        if methods_code:
+            code = "class TestAll(unittest.TestCase): \n\n" + methods_code
+        else:
+            code = ""
         return code
 
-    def gen_test_method_code(self, call_info):
-        (tick, key, s_args, s_kwargs, s_res, s_exc) = call_info
+    def gen_test_method_code(self, tick, key, s_args, s_kwargs, s_res, s_exc):
+        callkey = CallKey.unserialize(key)
         self.local_scope = set()
         self.clear_replay_cache()
-        callkey = CallKey.unserialize(key)
         self.import_modules.add(callkey.module_name)
         code = "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
         # Arrange
