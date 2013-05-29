@@ -53,37 +53,31 @@ def capture_object_methods(obj, re_exclude=None):
         if (not re_exclude or not re.match(re_exclude, fun.__name__)):
             setattr(obj, fun.__name__, capture(fun))
 
-def _setattr_object_property(obj, name, value):
+# TODO this does not capture things like object.property.method(...)
+def capture_class_properties(klass, re_exclude=None):
+    """ Decorates all properties of the class. """
+    # TODO what if class has a __setattr__ already
+    # TODO re_exclude
+    # TODO do not decorate already decorated (~inherited) ones
     serialize = Repo.marshal().serialize
     callhistory = Repo.callhistory()
-    tick = callhistory.get_tick()
-    callkey = CallKey(obj.__module__, obj.__class__.__name__, "__setattr__")
-    callhistory.call_object(tick, id(obj), str(callkey))
-    callhistory.call_enter(tick, str(callkey), serialize([name, value]), serialize({}))
-    callhistory.call_result(tick, serialize(None), serialize(None))
-
-def _setattr_wrapper(self, name, value):
-    # TODO lambda, functions
-    # TODO generators
-    if not callable(value):
-        (value2,) = Repo.callhistory().replace_args([value])
-        _setattr_object_property(self, name, value2)
-    self.__dict__[name] = value
-
-# TODO this does not capture things like object.prop.append(...)
-def capture_class_properties(klass, re_exclude=None):
-    """ Decorates all properties of the object. """
-    # TODO what if class has a __setattr__ already
-    # TODO re_exclude
-    # TODO do not decorate already decorated (~inherited) ones
+    callkey = CallKey(klass.__module__, klass.__name__, "__setattr__")
+    key = str(callkey)
+    def _setattr_wrapper(self, name, value):
+        # TODO lambda, functions
+        # TODO generators
+        if not callable(value):
+            (value2,) = callhistory.replace_args([value])
+            tick = callhistory.get_tick()
+            callhistory.call_object(tick, id(self), key)
+            callhistory.call_enter(tick, key, serialize([name, value2]), serialize({}))
+            callhistory.call_result(tick, serialize(None), serialize(None))
+        self.__dict__[name] = value
     klass.__setattr__ = types.MethodType(_setattr_wrapper, None, klass)
 
-def capture_object_properties(obj):
+def capture_object_properties(obj, re_exclude=None):
     """ Decorates all properties of the object. """
-    # TODO what if class has a __setattr__ already
-    # TODO re_exclude
-    # TODO do not decorate already decorated (~inherited) ones
-    obj.__class__.__setattr__ = types.MethodType(_setattr_wrapper, None, obj.__class__)
+    capture_class_properties(obj.__class__, re_exclude)
 
 def capture(function):
     """ Decorator which captures the args and the return values or the exception of the function. """
@@ -91,14 +85,21 @@ def capture(function):
     if runmode != "capture":
         return function
     # TODO do not decorate already decorated ones
+    mode = None
+    if is_bound_method(function):
+        mode = 1
+    elif is_module_function(function):
+        mode = 2
+    else:
+        raise Exception("Unknown object to capture " + repr(function))
+    serialize = Repo.marshal().serialize
+    callhistory = Repo.callhistory()
     def wrapper(*args, **kwargs):
-        serialize = Repo.marshal().serialize
-        callhistory = Repo.callhistory()
         tick = callhistory.get_tick()
-        if is_bound_method(function):
+        if mode == 1:
             callkey = CallKey(function.im_self.__module__, function.im_self.__class__.__name__, function.__name__)
             callhistory.call_object(tick, id(function.im_self), str(callkey))
-        elif is_module_function(function):
+        elif mode == 2:
             callkey = CallKey(function.__module__, None, function.__name__)
         else:
             raise Exception("Unknown object to capture " + repr(function))
@@ -348,8 +349,7 @@ class CallHistoryBuilder(object):
         return tick in self.directive and "MOCK" in self.directive[tick]
 
     def is_captured_object(self, arg):
-        # TODO use reverse hash
-        return id(arg) in self.object_id_for_tick.values()
+        return id(arg) in self.key_for_object_id
 
     def replace_args(self, args):
         args2 = []
@@ -698,18 +698,18 @@ class TestCodegen:
                 code += code2
                 args2.append(VarName(object_name))
             else:
-                args2.append(Repo.marshal().serialize(arg))
+                args2.append(self.marshal.serialize(arg))
         return (code, args2)
 
     def c_replay_call_args(self, tick, old_s_args):
-        args = Repo.marshal().unserialize(old_s_args)
+        args = self.marshal.unserialize(old_s_args)
         (code, args2) = self.replay_args(tick, args)
         # TODO serialize in marshal, not here
         return (code, "[" + ", ".join([ str(arg) for arg in args2 ]) + "]")
 
     def c_replay_call_kwargs(self, tick, old_s_kwargs):
         code = ""
-        kwargs = Repo.marshal().unserialize(old_s_kwargs)
+        kwargs = self.marshal.unserialize(old_s_kwargs)
         kwargs2 = {}
         for (argname, argvalue) in kwargs.iteritems():
             if self.is_object_reference(argvalue):
@@ -718,7 +718,7 @@ class TestCodegen:
                 code += code2
                 kwargs2[argname] = VarName(object_name)
             else:
-                kwargs2[argname] = Repo.marshal().serialize(argvalue)
+                kwargs2[argname] = self.marshal.serialize(argvalue)
         # TODO serialize in marshal, not here
         return (code, ", ".join([ str(argname) + "=" + str(argvalue) for (argname, argvalue) in kwargs2.iteritems() ]))
 
