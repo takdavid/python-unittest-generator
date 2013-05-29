@@ -1,6 +1,8 @@
 """ unit test generator """
 import re
 import types
+import simplejson as json
+from json import JSONEncoder
 
 """ The default run mode is non-capture. """
 runmode = "test" # "capture" or "test"
@@ -71,7 +73,7 @@ def capture_class_properties(klass, re_exclude=None):
             tick = callhistory.get_tick()
             callhistory.call_object(tick, id(self), key)
             callhistory.call_enter(tick, key, serialize([name, value2]), serialize({}))
-            callhistory.call_result(tick, serialize(None), serialize(None))
+            callhistory.call_result(tick, None, None)
         self.__dict__[name] = value
     klass.__setattr__ = types.MethodType(_setattr_wrapper, None, klass)
 
@@ -110,10 +112,10 @@ def capture(function):
         callhistory.call_enter(tick, str(callkey), serialize(args2), serialize(kwargs2))
         try:
             ret = function(*args, **kwargs)
-            callhistory.call_result(tick, serialize(ret), serialize(None))
+            callhistory.call_result(tick, serialize(ret) if ret is not None else None, None)
             return ret
         except Exception, exc:
-            callhistory.call_result(tick, serialize(None), serialize(exc))
+            callhistory.call_result(tick, None, serialize(exc))
             raise exc
     wrapper.__name__ = function.__name__
     wrapper.__doc__ = function.__doc__
@@ -200,7 +202,7 @@ class Repo:
     @staticmethod
     def marshal():
         if not isinstance(Repo._marshal, AbstractMarshal):
-            Repo._marshal = ReprMarshal()
+            Repo._marshal = JsonMarshal()
         return Repo._marshal
 
     _callhistory = None
@@ -225,6 +227,48 @@ class Repo:
 class AbstractMarshal:
     def serialize(self, obj): pass
     def unserialize(self, obj): pass
+
+
+class JsonMarshal (AbstractMarshal, JSONEncoder):
+
+    def default(self, o):
+        if hasattr(o, "toJSON"):
+            return o.toJSON()
+        else:
+            return json.dumps(o)
+
+    def serialize(self, obj):
+        if isinstance(obj, Exception):
+            return json.dumps({ "__Exception": str(obj) })
+        if obj == True:
+            return "True"
+        return self.encode(obj)
+
+    def unserialize(self, jsonstring):
+        if jsonstring == "null":
+            return None
+        obj = json.loads(jsonstring)
+        if isinstance(obj, dict) and "__Exception" in obj:
+            return Exception(* obj["__Exception"])
+        return obj
+
+    def empty_list(self, obj):
+        return "[]"
+
+    def empty_dict(self, obj):
+        return "{}"
+
+    def none(self):
+        return "null"
+
+    def default_exception(self):
+        return "Exception()"
+
+    def is_empty(self, code):
+        return not code or code in ("()", "[]", "{}", "''", '""', self.none())
+
+    def is_exception(self, s_exc):
+        return s_exc and s_exc != self.none()
 
 
 class ReprMarshal (AbstractMarshal):
@@ -257,7 +301,7 @@ class ReprMarshal (AbstractMarshal):
 class VarName(object):
 
     def __init__(self, name):
-        self.name = name
+        self.name = str(name)
 
     def __repr__(self):
         return self.name
@@ -265,6 +309,8 @@ class VarName(object):
     def __str__(self):
         return self.name
 
+    def toJSON(self):
+        return self.name
 
 class Stack(list):
 
@@ -370,6 +416,8 @@ class CallHistoryBuilder(object):
         for arg in args:
             if isinstance(arg, list):
                 arg = self.replace_args(arg)
+            if isinstance(arg, tuple):
+                arg = tuple(self.replace_args(arg))
             # TODO 1 deep replace for dict
             # TODO deep replace for other container types
             if self.is_captured_object(arg):
@@ -388,8 +436,6 @@ class CallHistoryBuilder(object):
                 kwargs2[argname] = argvalue
         return kwargs2
 
-
-import simplejson as json
 
 class CallHistoryWriterJson(CallHistoryBuilder):
 
@@ -415,21 +461,22 @@ class CallHistoryWriterJson(CallHistoryBuilder):
             obj["args"] = s_args
         if not self.marshal.is_empty(s_kwargs):
             obj["kwargs"] = s_kwargs
-        self.write(self.get_indent() + '"enter", ' + str(tick) + ", " + json.dumps(obj) + ",")
+        self.write(self.get_indent() + '"enter", ' + str(tick) + ", " + self.marshal.serialize(obj) + ",")
 
     def call_result(self, tick, s_res, s_exc):
         obj = { }
-        if s_exc == "None":
+        if self.marshal.is_empty(s_exc):
             obj = { "return" : s_res }
         else:
             obj = { "raise" : s_exc }
-        self.write(self.get_indent() + '"leave", ' + str(tick) + ", " + json.dumps(obj) + ",")
+        self.write(self.get_indent() + '"leave", ' + str(tick) + ", " + self.marshal.serialize(obj) + ",")
 
 
 class CallHistoryWriter(CallHistoryBuilder):
 
     def __init__(self):
         super(CallHistoryWriter, self).__init__()
+        self.marshal = Repo.marshal()
 
     def write(self, str):
         self.log.append(str)
@@ -447,19 +494,18 @@ class CallHistoryWriter(CallHistoryBuilder):
         self.write(self.get_indent() + "KWARGS " + s_kwargs)
 
     def call_result(self, tick, s_res, s_exc):
-        if s_exc == "None":
+        if self.marshal.is_empty(s_exc):
             self.write(self.get_indent() + "RETURN " + s_res)
         else:
             self.write(self.get_indent() + "RAISE " + s_exc)
 
-
-# TODO 1 JSON
 
 class CallHistoryParser(CallHistoryBuilder):
 
     def __init__(self):
         super(CallHistoryParser, self).__init__()
         self._parse_directives = {}
+        self.marshal = Repo.marshal()
 
     def setDirective(self, indent, key, directive):
         if not directive:
@@ -556,7 +602,7 @@ class CallHistoryParserJson(CallHistoryParser):
                 continue
             m = re.match("^(\s*)", line)
             indent = m.group(1)
-            arr = json.loads("[" + line + "null]")
+            arr = self.marshal.unserialize("[" + line + "null]")
             if arr[0] == "enter":
                 tick = arr[1]
                 direct = arr[2].get("directive")
@@ -693,7 +739,7 @@ class TestCodegen:
         return "_".join(map(lambda elem: str(elem).replace('.', '_'), parts))
 
     def unserialize_code(self, serialized):
-        return serialized
+        return str(serialized)
 
     def mock_code(self):
         code = ""
@@ -734,6 +780,7 @@ class TestCodegen:
         args_code = ""
         has_args = not self.marshal.is_empty(s_args)
         if has_args:
+            # TODO something like args_code += repr(self.marshal.unserialize(s_args))
             s_args_code = s_args[1:-1]
             if s_args_code[-1] == ",":
                 s_args_code = s_args_code[:-1]
@@ -742,6 +789,7 @@ class TestCodegen:
         if has_args and has_kwargs:
             args_code += ", "
         if has_kwargs:
+            # TODO something like args_code += repr(self.marshal.unserialize(s_kwargs))
             args_code += self.unserialize_code(s_kwargs)
         fn_parts = full_function_name.split(".")
         if len(fn_parts) == 2 and fn_parts[1] == "__setattr__":
@@ -794,13 +842,13 @@ class TestCodegen:
                 code += code2
                 args2.append(VarName(object_name))
             else:
-                args2.append(self.marshal.serialize(arg))
+                args2.append(repr(arg))
         return (code, args2)
 
     def c_replay_call_args(self, tick, old_s_args):
         args = self.marshal.unserialize(old_s_args) if old_s_args else []
         (code, args2) = self.replay_args(tick, args)
-        # TODO 2 serialize in marshal, not here
+        # TODO 2 serialize not here
         return (code, "[" + ", ".join([ str(arg) for arg in args2 ]) + "]")
 
     def c_replay_call_kwargs(self, tick, old_s_kwargs):
@@ -814,8 +862,8 @@ class TestCodegen:
                 code += code2
                 kwargs2[argname] = VarName(object_name)
             else:
-                kwargs2[argname] = self.marshal.serialize(argvalue)
-        # TODO 2 serialize in marshal, not here
+                kwargs2[argname] = argvalue
+        # TODO 2 serialize not here
         return (code, ", ".join([ str(argname) + "=" + str(argvalue) for (argname, argvalue) in kwargs2.iteritems() ]))
 
     def clear_replay_cache(self):
@@ -879,6 +927,7 @@ class TestCodegen:
         self.clear_replay_cache()
         self.import_modules.add(callkey.module_name)
         code = "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
+        code += "    null = None\n" # TODO ugly hack
         # Arrange
         code += self.mock_setup_code(self.functions_to_mock(tick))
         # TODO 1 static class methods
