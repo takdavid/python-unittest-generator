@@ -48,7 +48,7 @@ def capture_module_functions(mod, exclude=None):
 
 def capture_object_methods(obj, re_exclude=None):
     """ Decorates all functions of the object, except the explicitely excluded ones. """
-    # TODO do not decorate already decorated (~inherited) ones - decorator registry dict?
+    # TODO 1 do not decorate already decorated (~inherited) ones - decorator registry dict?
     for fun in callablesOf(obj):
         if (not re_exclude or not re.match(re_exclude, fun.__name__)):
             setattr(obj, fun.__name__, capture(fun))
@@ -56,9 +56,9 @@ def capture_object_methods(obj, re_exclude=None):
 # TODO this does not capture things like object.property.method(...)
 def capture_class_properties(klass, re_exclude=None):
     """ Decorates all properties of the class. """
-    # TODO what if class has a __setattr__ already
-    # TODO re_exclude
-    # TODO do not decorate already decorated (~inherited) ones
+    # TODO 1 what if class has a __setattr__ already
+    # TODO 1 re_exclude
+    # TODO do not decorate already decorated ones
     serialize = Repo.marshal().serialize
     callhistory = Repo.callhistory()
     callkey = CallKey(klass.__module__, klass.__name__, "__setattr__")
@@ -356,6 +356,7 @@ class CallHistoryBuilder(object):
         for arg in args:
             if isinstance(arg, list):
                 arg = self.replace_args(arg)
+            # TODO 1 deep replace for dict
             # TODO deep replace for other container types
             if self.is_captured_object(arg):
                 args2.append("$" + str(id(arg)) + "$")
@@ -364,7 +365,7 @@ class CallHistoryBuilder(object):
         return args2
 
     def replace_kwargs(self, kwargs):
-        # TODO deep replace
+        # TODO 1 deep replace
         kwargs2 = {}
         for (argname, argvalue) in kwargs.iteritems():
             if self.is_captured_object(argvalue):
@@ -373,6 +374,8 @@ class CallHistoryBuilder(object):
                 kwargs2[argname] = argvalue
         return kwargs2
 
+
+# TODO 1 JSON
 
 class CallHistoryWriter(CallHistoryBuilder):
 
@@ -397,6 +400,8 @@ class CallHistoryWriter(CallHistoryBuilder):
         else:
             self.write(self.get_indent() + "RAISE " + s_exc)
 
+
+# TODO 1 JSON
 
 class CallHistoryParser(CallHistoryBuilder):
 
@@ -541,10 +546,11 @@ class CallHistory(CallHistoryBuilder):
             yield (tick, key, s_args, s_kwargs, s_res, s_exc)
 
 
+# TODO 1 move this out to some config data
+
 class TestBuilderInfo:
 
     def is_insideeffect(self, method_name, class_name, module_name, s_args, s_kwargs):
-        # TODO hardwired
         if class_name == "Ent":
             if method_name in ["factor", "trial_division", "primitive_root", "powermod"]:
                 return False
@@ -649,7 +655,7 @@ class TestCodegen:
             args_code += self.unserialize_code(s_kwargs)
         fn_parts = full_function_name.split(".")
         if len(fn_parts) == 2 and fn_parts[1] == "__setattr__":
-            # TODO switch to more natural x.y = z syntax here
+            # TODO 1 switch to more natural x.y = z syntax here
             return "setattr(" + fn_parts[0] + ", " + args_code + ")"
         return full_function_name + "(" + args_code + ")"
 
@@ -667,7 +673,7 @@ class TestCodegen:
         self.import_modules.add(module_name)
         code += "    " + object_name + " = " + module_name + "." + class_name + "(" + ( repr(constructor_args) if constructor_args else "") + ")\n"
         self.local_scope.add(object_name)
-        # TODO build is_insideeffect cache
+        # TODO optim: build is_insideeffect cache
         for (old_id, old_key, old_s_args, old_s_kwargs, old_s_res, old_s_exc) in self.callhistory.get_object_history_until(tick, objid):
             old_k = CallKey.unserialize(old_key)
             if self.testbuilderinfo.is_insideeffect(old_k.function_name, old_k.class_name, old_k.module_name, old_s_args, old_s_kwargs):
@@ -704,7 +710,7 @@ class TestCodegen:
     def c_replay_call_args(self, tick, old_s_args):
         args = self.marshal.unserialize(old_s_args)
         (code, args2) = self.replay_args(tick, args)
-        # TODO serialize in marshal, not here
+        # TODO 2 serialize in marshal, not here
         return (code, "[" + ", ".join([ str(arg) for arg in args2 ]) + "]")
 
     def c_replay_call_kwargs(self, tick, old_s_kwargs):
@@ -719,7 +725,7 @@ class TestCodegen:
                 kwargs2[argname] = VarName(object_name)
             else:
                 kwargs2[argname] = self.marshal.serialize(argvalue)
-        # TODO serialize in marshal, not here
+        # TODO 2 serialize in marshal, not here
         return (code, ", ".join([ str(argname) + "=" + str(argvalue) for (argname, argvalue) in kwargs2.iteritems() ]))
 
     def clear_replay_cache(self):
@@ -785,7 +791,7 @@ class TestCodegen:
         code = "  def " + self.gen_func_name("test", callkey, str(tick)) + "(self):\n"
         # Arrange
         code += self.mock_setup_code(self.functions_to_mock(tick))
-        # TODO static class methods
+        # TODO 1 static class methods
         if callkey.is_object_method():
             (code2, object_name) = self.c_replay_object(tick, self.callhistory.object_id_for_tick.get(tick))
             full_function_name = object_name + "." + callkey.function_name

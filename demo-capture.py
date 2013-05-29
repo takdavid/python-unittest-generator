@@ -37,6 +37,8 @@ E.enable(X, y=X)
 E.factor(2313)
 E.primitive_root(2311)
 
+# TODO demo mocks
+
 # write out the capture log
 utg.write_capture_log('capture.log')
 
