@@ -20,10 +20,8 @@ def relative_filepath(fn):
 
 
 test_locations = pytest_collect()
-test_files = list(sorted(set(filenam for filenam, lineno, funam in test_locations)))
-from _pytest.config.findpaths import get_common_ancestor
-test_root = str(get_common_ancestor([py.path.local(path) for path in test_files]))
-test_root = os.path.commonpath(test_files)
+test_files = set(filenam for filenam, lineno, funam in test_locations)
+test_root = os.path.commonpath(list(test_files))
 
 
 def every_binary_split(head, tail=''):
@@ -77,6 +75,8 @@ def suggest_path(package_name, suggested_dir, file_name):
 
 
 def find_package(relfn):
+    extend_syspath = []
+    touch_files = []
     package_dir = ''
     package_name = ''
     for head, tail in every_binary_split(relfn):
@@ -89,54 +89,69 @@ def find_package(relfn):
             package_name = os.path.basename(package_dir)
             break
     if not package_dir:
+        print('Warning: source %s is not in a package' % relfn)
         package_dir = os.path.dirname(relfn)
         package_name = os.path.basename(package_dir)
-        if package_dir not in sys.path:
-            print('Warning: unimportable module %s' % relfn)
+        if package_name.isidentifier():
+            touch_files.append(os.path.join(package_dir, '__init__.py'))
+            print('Creating init file in %s' % package_dir)
+    if not package_name.isidentifier():
+        print('Warning: "%s" is not a valid package name, importing %s as a module' % (package_name, relfn))
+        extend_syspath.append(package_dir)
+        package_name = None
 
-    return package_dir, package_name
-
-
-def find_module_name(relfn):
-    return os.path.splitext(os.path.split(relfn)[1])[0]
+    return package_dir, package_name, extend_syspath, touch_files
 
 
 def test_module_for_file(relfn):
     file_dir, file_name = os.path.split(relfn)
-    package_dir, package_name = find_package(relfn)
+    package_dir, package_name, _, _ = find_package(relfn)
+    module_name = inspect.getmodulename(relfn)
+    test_file_base_name = package_name or module_name
 
     package_local_test_dir = os.path.join(package_dir, 'tests')
 
     if file_dir in test_file_bush and not package_local_test_dir in test_file_bush:
         # 'there is already a test file next to the file':
-        return suggest_path(package_name, file_dir, file_name)
+        return suggest_path(test_file_base_name, file_dir, file_name)
 
     if package_local_test_dir in test_file_bush:
         # 'there is a test directory in the package, next to or above the file, then use that':
-        return suggest_path(package_name, package_local_test_dir, file_name)
+        return suggest_path(test_file_base_name, package_local_test_dir, file_name)
 
     project_test_dir = relative_filepath(os.path.join(PROJECT_ROOT, 'tests'))
 
     if project_test_dir in test_file_bush:
         # 'there is a test directory outside of the package and an optional src/ dir, than use that':
-        return suggest_path(package_name, project_test_dir, file_name)
+        return suggest_path(test_file_base_name, project_test_dir, file_name)
 
     is_lambda_package = any((head in lambda_function_roots or head in lambda_layer_roots)
                             for head, tail in every_binary_split(relfn))
 
     if is_lambda_package:
-        return suggest_path(package_name, package_local_test_dir, file_name)
-        # return suggest_path(package_name, project_test_dir, file_name)
+        return suggest_path(test_file_base_name, package_local_test_dir, file_name)
+        # return suggest_path(test_file_base_name, project_test_dir, file_name)
     else:
-        return suggest_path(package_name, file_dir, file_name)
+        return suggest_path(test_file_base_name, file_dir, file_name)
 
 
-TEST_CODE_TEMPLATE = """
-from {package_name} import {module_name}
+def gen_test_code_template(package_name, module_name, func_name):
+    c = ''
+    if package_name:
+        c += "from %s import %s" % (package_name, module_name)
+    else:
+        c += "import %s" % module_name
+    c += "\n"
+    c += "def test_%s():\n    pass\n" % func_name
+    c += "\n"
+    return c
 
-def test_{func_name}():
-    pass
-"""
+
+def touch(fn):
+    if not os.path.isfile(fn):
+        with open(fn, 'a') as f:
+            f.flush()
+
 
 for ana in coverage_collect():
     relfn = relative_filepath(ana[0])
@@ -146,10 +161,24 @@ for ana in coverage_collect():
         print('Missing tests for %s lines %s' % (relfn, ana[4]))
         testfn = test_module_for_file(relfn)
         print('Suggested place %s %s' % (testfn, 'EXISTS' if os.path.isfile(testfn) else 'NEW'))
-        _, package_name = find_package(relfn)
-        module_name = find_module_name(relfn)
-        code = TEST_CODE_TEMPLATE.format(package_name=package_name, module_name=module_name, func_name='some_func')
-        if not os.path.isdir(os.path.dirname(testfn)):
-            os.makedirs(os.path.dirname(testfn))
+
+        module_name = inspect.getmodulename(relfn)
+        if not module_name.isidentifier():
+            print('Warning: Unimportable module name "%s"' % module_name)
+            continue
+
+        package_dir, package_name, extend_syspath, touch_files = find_package(relfn)
+
+        code = gen_test_code_template(package_name, module_name, 'some_func')
+        test_dir = os.path.dirname(testfn)
+        if not os.path.isdir(test_dir):
+            os.makedirs(test_dir)
+        if package_name and os.path.basename(test_dir) == 'tests':
+            touch(os.path.join(test_dir, '__init__.py'))
         with open(testfn, 'a') as f:
             f.write(code)
+        for fn in touch_files:
+            touch(fn)
+
+        if extend_syspath:
+            print('You should extend PYTHONPATH with %s' % ':'.join(extend_syspath))

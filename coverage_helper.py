@@ -1,6 +1,10 @@
 from coverage import Coverage
 
 
+def redo_collect():
+    raise NotImplementedError()
+
+
 def has_uncovered_lines(ana):
     return ana[3] and ana[4]
 
