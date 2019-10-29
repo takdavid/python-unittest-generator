@@ -17,7 +17,9 @@ def collect():
     dat = cov.get_data()
     dat.read_file(os.getenv('COVERAGE_FILE', '.coverage'))  # this is necessary for some reason
     for p in Path().rglob('*.py'):
-        dat.touch_file(str(p))
+        fn = str(p.absolute())
+        if not (cov.omit_match and cov.omit_match.match(fn)):
+            dat.touch_file(fn)
     for fn in sorted(dat.measured_files()):
         ana = cov.analysis2(fn)
         if has_uncovered_lines(ana):

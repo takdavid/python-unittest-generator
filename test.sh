@@ -10,17 +10,24 @@ mkdir -p testproject/importable_package/tests
 touch_py testproject/importable_package/tests/__init__.py
 touch_py testproject/importable_package/__init__.py
 
-mkdir -p testproject/unimportable-dir/burried_package/burried_subpackage/tests
-touch_py testproject/unimportable-dir/burried_package/burried_subpackage/tests/__init__.py
-touch_py testproject/unimportable-dir/burried_package/__init__.py
-touch_py testproject/unimportable-dir/unreachable_script.py
+mkdir -p testproject/non-importable-dir/burried_package/burried_subpackage/tests
+touch_py testproject/non-importable-dir/burried_package/burried_subpackage/tests/__init__.py
+touch_py testproject/non-importable-dir/burried_package/burried_subpackage/__init__.py
+touch_py testproject/non-importable-dir/burried_package/__init__.py
+touch_py testproject/non-importable-dir/unreachable_script.py
 
-touch testproject/pytest.ini
-export COVERAGE_FILE=.coverage
+cat >> testproject/pytest.ini <<PYTESTINI;
+[pytest]
+python_paths =
+    non-importable-dir
+PYTESTINI
+
 cat >testproject/.coveragerc <<COVERAGERC;
 [run]
 omit = $VIRTUAL_ENV/*
 COVERAGERC
+
+export COVERAGE_FILE=.coverage
 
 cd testproject
 coverage run $(which pytest) || true
@@ -40,8 +47,8 @@ function assert_f() { test -f $1 || (echo Missing $1; exit 1) }
 assert_f testproject/importable_package/tests/subpackage/test_subpackage.py
 assert_f testproject/importable_package/tests/test_importable_package.py
 
-assert_f testproject/unimportable-dir/burried_package/burried_subpackage/tests/test_burried_subpackage.py
-assert_f testproject/unimportable-dir/test_unreachable_script.py
+assert_f testproject/non-importable-dir/burried_package/burried_subpackage/tests/test_burried_subpackage.py
+assert_f testproject/non-importable-dir/test_unreachable_script.py
 
 # CLEANUP
 
