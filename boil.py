@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 
 from coverage_helper import collect as coverage_collect
-from pytest_helper import collect as pytest_collect
 
 PROJECT_ROOT = os.getcwd()  # FIXME ?
 
@@ -13,10 +12,6 @@ def relative_filepath(fn):
         return fn[len(PROJECT_ROOT):].lstrip('/\\')
     else:
         return fn
-
-
-test_locations = pytest_collect()
-test_files = set(filenam for filenam, lineno, funam in test_locations)
 
 
 def every_binary_split(head, tail=''):
@@ -38,8 +33,6 @@ def bush(paths):
     return d
 
 
-test_file_bush = bush(test_files)
-
 lambda_layer_roots = [str(p) for p in Path(PROJECT_ROOT).rglob('python')]
 lambda_layer_roots = [relative_filepath(p) for p in lambda_layer_roots if os.path.isdir(p)]
 lambda_function_files = [str(p) for p in Path(PROJECT_ROOT).rglob('lambda_function*')]
@@ -49,23 +42,11 @@ package_roots = [relative_filepath(os.path.dirname(str(p))) for p in init_files 
 package_roots = set([p for p in package_roots if str(p)[0] != '.'])
 
 
-def suggest_test_filename(package_name, suggested_dir, file_name):
-    if file_name == '__init__.py':
-        file_name = package_name + '.py'
-    if suggested_dir in test_file_bush:
-        prefixed_package = 'test_' + package_name + '.py'
-        if prefixed_package in test_file_bush[suggested_dir]:
-            return prefixed_package
-        suffixed_package = package_name + '_test.py'
-        if suffixed_package in test_file_bush[suggested_dir]:
-            return suffixed_package
-        elif any(fn.endswith('_test.py') for fn in test_file_bush[suggested_dir]):
-            return file_name.replace('.py', '_test.py')
-    return 'test_' + file_name
-
-
 def suggest_path(package_name, suggested_dir, file_name):
-    suggested_filename = suggest_test_filename(package_name, suggested_dir, file_name)
+    if file_name == '__init__.py':
+        suggested_filename = 'test_' + package_name + '.py'
+    else:
+        suggested_filename = 'test_' + file_name
     return os.path.join(suggested_dir, suggested_filename)
 
 
@@ -106,7 +87,43 @@ def find_package(relfn):
     return package_dir, package_name, extend_syspath, touch_files
 
 
+class ProjectPrefences(object):
+    def adjacent_test_files(self):
+        pass  # FIXME
+
+    def one_test_subpackage(self):
+        pass  # FIXME
+
+
+class Package(object):
+    prefer = ProjectPrefences()
+
+    def __init__(self, relfn) -> None:
+        self.relfn = relfn
+
+    def is_lambda(self):
+        return any((head in lambda_function_roots or head in lambda_layer_roots)
+                   for head, tail in every_binary_split(self.relfn))
+
+    def has_test_subpackage(self):
+        pass  # FIXME
+
+
+class File(object):
+    def __init__(self, relfn) -> None:
+        self.relfn = relfn
+
+    def is_test(self):
+        return ('test' in inspect.getmodulename(self.relfn).split('_')) or ('tests' in self.relfn.split(os.sep))
+
+
+class Project(object):
+    prefer = ProjectPrefences()
+
+
 def test_module_for_file(relfn):
+    package = Package(relfn)
+    project = Project()
     file_dir, file_name = os.path.split(relfn)
     package_dir, package_name, _, _ = find_package(relfn)
     test_file_base_name = '.'.join(package_name.split('.')[1:]) if '.' in package_name else package_name
@@ -118,22 +135,17 @@ def test_module_for_file(relfn):
     else:
         outside_package_test_dir = project_test_dir
 
-    if file_dir in test_file_bush and not inside_package_test_dir in test_file_bush:
-        # 'there is already a test file next to the file':
+    if package.prefer.adjacent_test_files() and not package.has_test_subpackage():
         return suggest_path(test_file_base_name, file_dir, file_name)
 
-    if inside_package_test_dir in test_file_bush:
-        # 'there is a test directory in the package, next to or above the file, then use that':
+    if package.prefer.one_test_subpackage():
         return suggest_path(test_file_base_name, inside_package_test_dir, file_name)
 
-    if project_test_dir in test_file_bush:
+    if project.prefer.one_test_subpackage():
         # 'there is a test directory outside of the package and an optional src/ dir, than use that':
         return suggest_path(test_file_base_name, project_test_dir, file_name)
 
-    is_lambda_package = any((head in lambda_function_roots or head in lambda_layer_roots)
-                            for head, tail in every_binary_split(relfn))
-
-    if is_lambda_package:
+    if package.is_lambda():
         return suggest_path(test_file_base_name, outside_package_test_dir, file_name)
         # return suggest_path(test_file_base_name, project_test_dir, file_name)
     else:
@@ -162,7 +174,8 @@ def touch(fn):
 
 for ana in coverage_collect():
     relfn = relative_filepath(ana[0])
-    if (relfn in test_files) or ('tests' in relfn.split(os.sep)):
+    file = File(relfn)
+    if file.is_test():
         continue
     else:
         testfn = test_module_for_file(relfn)
