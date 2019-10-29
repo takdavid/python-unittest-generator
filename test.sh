@@ -61,6 +61,12 @@ assert_f not_a_package/tests/test_not_a_subpackage.py
 assert_f lambda-layers/my-lambda-layer/tests/test_my_lambda_module.py
 
 assert_f non-importable-dir/burried_package/tests/test_burried_subpackage.py
+diff non-importable-dir/burried_package/tests/test_burried_subpackage.py - <<PY;
+from burried_package import burried_subpackage
+def test_burried_subpackage():
+    pass
+
+PY
 assert_f non-importable-dir/burried_package/tests/__init__.py
 assert_f non-importable-dir/tests/test_unreachable_script.py
 
