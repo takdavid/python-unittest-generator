@@ -1,13 +1,9 @@
 import inspect
 import os
-import sys
 from pathlib import Path
 
-import py
-
-from .coverage_helper import collect as coverage_collect
-from .pytest_helper import collect as pytest_collect
-
+from coverage_helper import collect as coverage_collect
+from pytest_helper import collect as pytest_collect
 
 PROJECT_ROOT = os.getcwd()  # FIXME ?
 
@@ -21,7 +17,6 @@ def relative_filepath(fn):
 
 test_locations = pytest_collect()
 test_files = set(filenam for filenam, lineno, funam in test_locations)
-test_root = os.path.commonpath(list(test_files))
 
 
 def every_binary_split(head, tail=''):
@@ -158,9 +153,8 @@ for ana in coverage_collect():
     if relfn in test_files:
         print('Unused code in test %s lines %s' % (relfn, ana[4]))
     else:
-        print('Missing tests for %s lines %s' % (relfn, ana[4]))
         testfn = test_module_for_file(relfn)
-        print('Suggested place %s %s' % (testfn, 'EXISTS' if os.path.isfile(testfn) else 'NEW'))
+        print('%s %s' % ('Updating' if os.path.isfile(testfn) else 'Creating', testfn))
 
         module_name = inspect.getmodulename(relfn)
         if not module_name.isidentifier():
@@ -169,16 +163,17 @@ for ana in coverage_collect():
 
         package_dir, package_name, extend_syspath, touch_files = find_package(relfn)
 
-        code = gen_test_code_template(package_name, module_name, 'some_func')
         test_dir = os.path.dirname(testfn)
         if not os.path.isdir(test_dir):
             os.makedirs(test_dir)
         if package_name and os.path.basename(test_dir) == 'tests':
             touch(os.path.join(test_dir, '__init__.py'))
+
+        code = gen_test_code_template(package_name, module_name, 'some_func')
         with open(testfn, 'a') as f:
             f.write(code)
         for fn in touch_files:
             touch(fn)
 
         if extend_syspath:
-            print('You should extend PYTHONPATH with %s' % ':'.join(extend_syspath))
+            print('Extending PYTHONPATH with %s' % ':'.join(extend_syspath))

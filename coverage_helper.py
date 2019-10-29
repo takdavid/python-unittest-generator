@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from coverage import Coverage
 
 
@@ -12,7 +15,9 @@ def has_uncovered_lines(ana):
 def collect():
     cov = Coverage()
     dat = cov.get_data()
-    dat.read_file('.coverage.linux')  # this is necessary for some reason
+    dat.read_file(os.getenv('COVERAGE_FILE', '.coverage'))  # this is necessary for some reason
+    for p in Path().rglob('*.py'):
+        dat.touch_file(str(p))
     for fn in sorted(dat.measured_files()):
         ana = cov.analysis2(fn)
         if has_uncovered_lines(ana):
