@@ -122,38 +122,35 @@ class Project(object):
         return package_dir, package_name, extend_syspath, touch_files
 
 
+    def test_module_for_file(self, relfn):
+        package = Package(relfn)
+        project = self
+        file_dir, file_name = os.path.split(relfn)
+        package_dir, package_name, _, _ = project.find_package(relfn)
+        test_file_base_name = '.'.join(package_name.split('.')[1:]) if '.' in package_name else package_name
 
+        project_test_dir = project.root + 'tests'
+        inside_package_test_dir = os.path.join(package_dir, 'tests')
+        if Directory(package_dir) in project.root:
+            outside_package_test_dir = os.path.join(os.path.dirname(package_dir), 'tests')
+        else:
+            outside_package_test_dir = project_test_dir
 
+        if package.prefer.adjacent_test_files() and not package.has_test_subpackage():
+            return suggest_path(test_file_base_name, file_dir, file_name)
 
-def test_module_for_file(relfn):
-    package = Package(relfn)
-    project = Project()
-    file_dir, file_name = os.path.split(relfn)
-    package_dir, package_name, _, _ = project.find_package(relfn)
-    test_file_base_name = '.'.join(package_name.split('.')[1:]) if '.' in package_name else package_name
+        if package.prefer.one_test_subpackage():
+            return suggest_path(test_file_base_name, inside_package_test_dir, file_name)
 
-    project_test_dir = project.root + 'tests'
-    inside_package_test_dir = os.path.join(package_dir, 'tests')
-    if Directory(package_dir) in project.root:
-        outside_package_test_dir = os.path.join(os.path.dirname(package_dir), 'tests')
-    else:
-        outside_package_test_dir = project_test_dir
+        if project.prefer.one_test_subpackage():
+            # 'there is a test directory outside of the package and an optional src/ dir, than use that':
+            return suggest_path(test_file_base_name, project_test_dir, file_name)
 
-    if package.prefer.adjacent_test_files() and not package.has_test_subpackage():
-        return suggest_path(test_file_base_name, file_dir, file_name)
-
-    if package.prefer.one_test_subpackage():
-        return suggest_path(test_file_base_name, inside_package_test_dir, file_name)
-
-    if project.prefer.one_test_subpackage():
-        # 'there is a test directory outside of the package and an optional src/ dir, than use that':
-        return suggest_path(test_file_base_name, project_test_dir, file_name)
-
-    if package.is_lambda():
-        return suggest_path(test_file_base_name, outside_package_test_dir, file_name)
-        # return suggest_path(test_file_base_name, project_test_dir, file_name)
-    else:
-        return suggest_path(test_file_base_name, inside_package_test_dir, file_name)
+        if package.is_lambda():
+            return suggest_path(test_file_base_name, outside_package_test_dir, file_name)
+            # return suggest_path(test_file_base_name, project_test_dir, file_name)
+        else:
+            return suggest_path(test_file_base_name, inside_package_test_dir, file_name)
 
 
 def gen_test_code_template(fully_qualified_module_name):
@@ -183,7 +180,7 @@ for ana in coverage_collect():
     if file.is_test():
         continue
     else:
-        testfn = test_module_for_file(relfn)
+        testfn = project.test_module_for_file(relfn)
         print('%s %s for %s' % ('Updating' if os.path.isfile(testfn) else 'Creating', testfn, relfn))
 
         package_dir, package_name, extend_syspath, touch_files = project.find_package(relfn)
