@@ -173,30 +173,35 @@ def touch(fn):
             f.flush()
 
 
-for ana in coverage_collect():
-    project = Project()
-    relfn = project.root.relative_filepath(ana[0])
-    file = File(relfn)
-    if file.is_test():
-        continue
-    else:
-        testfn = project.test_module_for_file(relfn)
-        print('%s %s for %s' % ('Updating' if os.path.isfile(testfn) else 'Creating', testfn, relfn))
+def boil(filepaths):
+    for fn in filepaths:
+        project = Project()
+        relfn = project.root.relative_filepath(fn)
+        file = File(relfn)
+        if file.is_test():
+            continue
+        else:
+            testfn = project.test_module_for_file(relfn)
+            print('%s %s for %s' % ('Updating' if os.path.isfile(testfn) else 'Creating', testfn, relfn))
 
-        package_dir, package_name, extend_syspath, touch_files = project.find_package(relfn)
+            package_dir, package_name, extend_syspath, touch_files = project.find_package(relfn)
 
-        if package_name:
-            test_dir = os.path.dirname(testfn)
-            if not os.path.isdir(test_dir):
-                os.makedirs(test_dir)
-            if package_name and os.path.basename(test_dir) == 'tests' and package_dir not in extend_syspath:
-                touch(os.path.join(test_dir, '__init__.py'))
+            if package_name:
+                test_dir = os.path.dirname(testfn)
+                if not os.path.isdir(test_dir):
+                    os.makedirs(test_dir)
+                if package_name and os.path.basename(test_dir) == 'tests' and package_dir not in extend_syspath:
+                    touch(os.path.join(test_dir, '__init__.py'))
 
-            code = gen_test_code_template(package_name)
-            with open(testfn, 'a') as f:
-                f.write(code)
-            for fn in touch_files:
-                touch(fn)
+                code = gen_test_code_template(package_name)
+                with open(testfn, 'a') as f:
+                    f.write(code)
+                for fn in touch_files:
+                    touch(fn)
 
-            if extend_syspath:
-                print('Extending PYTHONPATH with %s' % ':'.join(extend_syspath))
+                if extend_syspath:
+                    print('Extending PYTHONPATH with %s' % ':'.join(extend_syspath))
+
+
+if __name__ == '__main__':
+    boil(ana[0] for ana in coverage_collect())
