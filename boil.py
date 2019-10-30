@@ -1,15 +1,8 @@
 import inspect
 import os
+from pathlib import Path
 
 from coverage_helper import collect as coverage_collect
-
-
-def every_binary_split(head, tail=''):
-    while os.path.splitdrive(head)[1] not in {'', '/', '\\'}:
-        head2, tail2 = os.path.split(head)
-        tail = os.path.join(tail2, tail) if tail else tail2
-        yield (head2, tail)
-        head = head2
 
 
 def suggest_path(package_name, suggested_dir, file_name):
@@ -38,7 +31,7 @@ class Directory(object):
         return self.relative
 
     def __add__(self, other):
-        return self.relative + str(other)
+        return os.path.join(self.relative, str(other))
 
     def is_lambda(self):
         return os.path.basename(self.relative) == 'python'
@@ -59,22 +52,32 @@ class Directory(object):
 class Package(object):
     prefer = ProjectPrefences()
 
-    def __init__(self, relfn) -> None:
-        self.relfn = relfn
+    def __init__(self, dir, name, pivot) -> None:
+        self.dir = Directory(dir)
+        self.name = name
+        self.pivot = pivot
 
     def is_lambda(self):
-        return any((Directory(head).is_lambda()) for head, tail in every_binary_split(self.relfn))
+        return self.dir.is_lambda() or any(Directory(head).is_lambda() for head in self.pivot.path.parents)
 
     def has_test_subpackage(self):
         pass  # FIXME
 
 
 class File(object):
-    def __init__(self, relfn) -> None:
-        self.relfn = relfn
+    def __init__(self, path) -> None:
+        self.path = Path(path)
+
+    @property
+    def dir(self):
+        return self.path.parent
+
+    @property
+    def name(self):
+        return os.path.split(str(self.path))[1]
 
     def is_test(self):
-        return ('test' in inspect.getmodulename(self.relfn).split('_')) or ('tests' in self.relfn.split(os.sep))
+        return ('test' in self.name.split('_')) or ('tests' in tuple(self.path.parts))
 
     def find_package(self):
         pass
@@ -83,9 +86,11 @@ class File(object):
 class Project(object):
     prefer = ProjectPrefences()
 
-    root = Directory(os.getcwd())  # FIXME
+    def __init__(self, rootdir) -> None:
+        self.root = Directory(rootdir)
 
-    def find_package(self, relfn):
+    def find_package(self, file):
+        relfn = str(file.path)
         extend_syspath = []
         touch_files = []
         module_name = inspect.getmodulename(relfn)
@@ -93,7 +98,8 @@ class Project(object):
             module_name = ''
         package_dir = ''
         package_name = module_name
-        for head, tail in every_binary_split(relfn):
+        for head in file.path.parents:
+            head = str(head)
             if Directory(head).is_lambda():
                 package_dir = head
                 extend_syspath.append(package_dir)
@@ -119,20 +125,20 @@ class Project(object):
                 package_name = module_name
                 extend_syspath.append(package_dir)
 
-        return package_dir, package_name, extend_syspath, touch_files
+        package = Package(dir=package_dir, name=package_name, pivot=file)
+        return package, extend_syspath, touch_files
 
 
-    def test_module_for_file(self, relfn):
-        package = Package(relfn)
+    def test_module_for_file(self, file):
         project = self
-        file_dir, file_name = os.path.split(relfn)
-        package_dir, package_name, _, _ = project.find_package(relfn)
-        test_file_base_name = '.'.join(package_name.split('.')[1:]) if '.' in package_name else package_name
+        file_dir, file_name = os.path.split(str(file.path))
+        package, _, _ = project.find_package(file)
+        test_file_base_name = '.'.join(package.name.split('.')[1:]) if '.' in package.name else package.name
 
         project_test_dir = project.root + 'tests'
-        inside_package_test_dir = os.path.join(package_dir, 'tests')
-        if Directory(package_dir) in project.root:
-            outside_package_test_dir = os.path.join(os.path.dirname(package_dir), 'tests')
+        inside_package_test_dir = package.dir + 'tests'
+        if Directory(package.dir) in project.root:
+            outside_package_test_dir = os.path.join(os.path.dirname(str(package.dir)), 'tests')
         else:
             outside_package_test_dir = project_test_dir
 
@@ -174,26 +180,23 @@ def touch(fn):
 
 
 def boil(filepaths):
+    project = Project(os.getcwd())
     for fn in filepaths:
-        project = Project()
-        relfn = project.root.relative_filepath(fn)
-        file = File(relfn)
+        file = File(project.root.relative_filepath(fn))
         if file.is_test():
             continue
         else:
-            testfn = project.test_module_for_file(relfn)
-            print('%s %s for %s' % ('Updating' if os.path.isfile(testfn) else 'Creating', testfn, relfn))
+            package, extend_syspath, touch_files = project.find_package(file)
+            testfn = project.test_module_for_file(file)
 
-            package_dir, package_name, extend_syspath, touch_files = project.find_package(relfn)
-
-            if package_name:
+            if package.name:
                 test_dir = os.path.dirname(testfn)
                 if not os.path.isdir(test_dir):
                     os.makedirs(test_dir)
-                if package_name and os.path.basename(test_dir) == 'tests' and package_dir not in extend_syspath:
+                if package.name and os.path.basename(test_dir) == 'tests' and str(package.dir) not in extend_syspath:
                     touch(os.path.join(test_dir, '__init__.py'))
 
-                code = gen_test_code_template(package_name)
+                code = gen_test_code_template(package.name)
                 with open(testfn, 'a') as f:
                     f.write(code)
                 for fn in touch_files:
